@@ -1,0 +1,46 @@
+{
+  "build": {
+    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "pnpm dev",
+    "devPath": "http://localhost:3000",
+    "distDir": "../docs"
+  },
+  "package": {
+    "productName": "Plainly",
+    "version": "1.7.3"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false
+    },
+    "windows": [
+      {
+        "title": "Plainly",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "me.disign.mdnice",
+      "icon": [
+        "icons/plainly-16x16.png",
+        "icons/plainly-24x24.png",
+        "icons/plainly-32x32.png",
+        "icons/plainly-48x48.png",
+        "icons/plainly-64x64.png",
+        "icons/plainly-128x128.png",
+        "icons/plainly-256x256.png",
+        "icons/plainly-512x512.png",
+        "icons/plainly.ico",
+        "icons/plainly.icns"
+      ]
+    },
+    "security": {
+      "csp": null
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "short_name": "Plainly",
+  "name": "Plainly",
+  "icons": [
+    {
+      "src": "https://mdnice.disign.me/plainly-128x128.png",
+      "sizes": "128x128",
+      "type": "image/png"
+    },
+    {
+      "src": "https://mdnice.disign.me/plainly-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": "./index.html",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
+}

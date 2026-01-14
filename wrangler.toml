@@ -1,0 +1,15 @@
+name = "markdown-nice"
+main = "worker/index.js"
+compatibility_date = "2024-06-01"
+workers_dev = true
+
+# TODO: set your Cloudflare account id
+account_id = "f6a80eb748def94c3e800c9a6456e16b"
+
+[[routes]]
+pattern = "mdnice.disign.me"
+zone_name = "disign.me" 
+
+[assets]
+directory = "./docs"
+binding = "ASSETS"
