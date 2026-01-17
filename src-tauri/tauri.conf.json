@@ -35,8 +35,11 @@
         "icons/plainly-128x128.png",
         "icons/plainly-256x256.png",
         "icons/plainly-512x512.png",
+        "icons/plainly-1024x1024.png",
         "icons/plainly.ico",
-        "icons/plainly.icns"
+        "icons/plainly-32x32.ico",
+        "icons/plainly-48x48.ico",
+        "icons/plainly-128x128.ico"
       ]
     },
     "security": {
