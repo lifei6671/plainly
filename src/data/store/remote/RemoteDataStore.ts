@@ -10,21 +10,34 @@ import {
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 export class RemoteDataStore implements IDataStore {
-  constructor(private baseUrl: string = "/api") {}
+  constructor(private baseUrl: string = "/api", private userId: number = 0) {}
+
+  setUserId(uid: number) {
+    this.userId = uid;
+  }
 
   private async request<T>(path: string, method: HttpMethod = "GET", body?: unknown): Promise<T> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (this.userId > 0) {
+      headers["X-User-Id"] = String(this.userId);
+    }
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
+      credentials: "include",
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new Error(`Request failed: ${response.status} ${text}`);
     }
-    return (await response.json()) as T;
+    const payload = (await response.json()) as {errcode?: number; errmsg?: string; data?: T};
+    if (payload && payload.errcode !== undefined && payload.errcode !== 0) {
+      throw new Error(payload.errmsg || "Request failed");
+    }
+    return (payload && ("data" in payload ? (payload.data as T) : (payload as unknown as T))) as T;
   }
 
   async init(): Promise<void> {
@@ -54,7 +67,8 @@ export class RemoteDataStore implements IDataStore {
   }
 
   createDocument(meta: NewDocumentPayload, content: string): Promise<number> {
-    return this.request<number>("/documents", "POST", {meta, content});
+    const payload = {...meta, uid: meta.uid ?? (this.userId > 0 ? this.userId : undefined)};
+    return this.request<number>("/documents", "POST", {meta: payload, content});
   }
 
   getDocumentMeta(documentId: number): Promise<DocumentMeta | null> {

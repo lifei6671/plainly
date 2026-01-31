@@ -32,7 +32,9 @@ import pluginCenter from "./utils/pluginCenter";
 import appContext from "./utils/appContext";
 import {uploadAdaptor} from "./utils/imageHosting";
 import bindHotkeys, {betterTab, rightClick} from "./utils/hotkey";
+import AuthModal from "./component/Auth/AuthModal";
 import {getConfigSync, setConfigSync} from "./utils/configStore";
+import {Button} from "antd";
 
 @inject("content")
 @inject("navbar")
@@ -45,9 +47,52 @@ class App extends Component {
     super(props);
     this.focus = false;
     this.scale = 1;
+    this.state = {
+      authVisible: false,
+      currentUser: null,
+    };
     this.handleUpdateMathjax = throttle(updateMathjax, 1500);
     this.handleUpdateMermaid = throttle(this.updateMermaid, 800);
+    this.isRemoteMode = this.resolveDataStoreMode() === "remote";
+    this.apiBase =
+      (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) ||
+      (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
+      "/api";
   }
+
+  mapUser = (u) => {
+    if (!u) return null;
+    return {
+      id: u.id,
+      account: u.account || u.username,
+      username: u.username || u.account,
+    };
+  };
+
+  setRuntimeUser = (user) => {
+    if (typeof window !== "undefined") {
+      if (user && user.id) {
+        window.__DATA_STORE_USER_ID__ = user.id;
+        window.__CURRENT_USER_ID__ = user.id;
+      } else {
+        window.__DATA_STORE_USER_ID__ = 0;
+        window.__CURRENT_USER_ID__ = 0;
+      }
+    }
+  };
+
+  resolveDataStoreMode = () => {
+    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
+      return import.meta.env.VITE_DATA_STORE;
+    }
+    if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
+      return window.__DATA_STORE_MODE__;
+    }
+    if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
+      return process.env.DATA_STORE_MODE;
+    }
+    return "browser";
+  };
 
   componentDidMount() {
     document.addEventListener("fullscreenchange", this.solveScreenChange);
@@ -92,6 +137,7 @@ class App extends Component {
     this.initMermaid();
     this.setEditorContent();
     this.setCustomImageHosting();
+    this.loadCurrentUser();
   }
 
   componentDidUpdate() {
@@ -153,6 +199,80 @@ class App extends Component {
     } else {
       this.props.imageHosting.setType(storedType);
     }
+  };
+
+  loadCurrentUser = async () => {
+    if (!this.isRemoteMode) {
+      this.setRuntimeUser(null);
+      this.setState({currentUser: null});
+      return;
+    }
+    try {
+      const user = await this.apiRequest("/auth/refresh", "POST");
+      const mapped = this.mapUser(user?.user);
+      this.setRuntimeUser(mapped);
+      this.setState({currentUser: mapped});
+    } catch (_e) {
+      this.setRuntimeUser(null);
+      this.setState({currentUser: null});
+    }
+  };
+
+  handleAuthOpen = () => {
+    this.setState({authVisible: true});
+  };
+
+  handleAuthClose = () => {
+    this.setState({authVisible: false});
+  };
+
+  apiRequest = async (path, method = "GET", body) => {
+    const res = await fetch(`${this.apiBase}${path}`, {
+      method,
+      headers: {"Content-Type": "application/json"},
+      credentials: "include",
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      const msg = (json && json.errmsg) || res.statusText || "请求失败";
+      throw new Error(msg);
+    }
+    if (json && json.errcode !== undefined && json.errcode !== 0) {
+      throw new Error(json.errmsg || "请求失败");
+    }
+    return json ? json.data : null;
+  };
+
+  handleLogin = async (username, password) => {
+    if (!this.isRemoteMode) throw new Error("当前为浏览器本地模式，无法登录");
+    const resp = await this.apiRequest("/auth/login", "POST", {account: username, password});
+    const mapped = this.mapUser(resp?.user);
+    this.setRuntimeUser(mapped);
+    this.setState({currentUser: mapped});
+  };
+
+  handleRegister = async (username, password) => {
+    if (!this.isRemoteMode) throw new Error("当前为浏览器本地模式，无法注册");
+    const resp = await this.apiRequest("/auth/register", "POST", {account: username, password});
+    const mapped = this.mapUser(resp?.user);
+    this.setRuntimeUser(mapped);
+    this.setState({currentUser: mapped});
+  };
+
+  handleUpdatePassword = async (oldPwd, newPwd) => {
+    if (!this.isRemoteMode) throw new Error("当前为浏览器本地模式，无法修改密码");
+    await this.apiRequest("/auth/password", "POST", {oldPassword: oldPwd, newPassword: newPwd});
+    this.setRuntimeUser(null);
+    this.setState({currentUser: null});
+  };
+
+  handleLogout = async () => {
+    if (this.isRemoteMode) {
+      await this.apiRequest("/auth/logout", "POST");
+    }
+    this.setRuntimeUser(null);
+    this.setState({currentUser: null});
   };
 
   setEditorContent = () => {
@@ -394,13 +514,31 @@ class App extends Component {
               <EditorMenu />
             </div>
             <div className={statusBarClass}>
-              <div className="nice-status-item nice-status-item-main">
-                <b>归属目录: </b>
-                {categoryName}
-                &nbsp;
-                <b>文件名: </b>
-                {documentName || "未命名.md"}
-              </div>
+              {this.isRemoteMode ? (
+                <>
+                  <div className="nice-status-item nice-status-item-main">
+                    <Button type="link" size="small" onClick={this.handleAuthOpen}>
+                      {this.state.currentUser
+                        ? `已登录：${this.state.currentUser.username || this.state.currentUser.account}`
+                        : "未登录"}
+                    </Button>
+                    <b>归属目录: </b>
+                    {categoryName}
+                    &nbsp;
+                    <b>文件名: </b>
+                    {documentName || "未命名.md"}
+                  </div>
+                </>
+              ) : (
+                <div className="nice-status-item nice-status-item-main">
+                  <b>离线模式</b>&nbsp;
+                  <b>归属目录: </b>
+                  {categoryName}
+                  &nbsp;
+                  <b>文件名: </b>
+                  {documentName || "未命名.md"}
+                </div>
+              )}
               <div className="nice-status-item">
                 <b>最后保存时间: </b>
                 {lastSavedText}
@@ -410,6 +548,15 @@ class App extends Component {
                 {markdownLength}
               </div>
             </div>
+            <AuthModal
+              visible={this.state.authVisible}
+              onClose={this.handleAuthClose}
+              currentUser={this.state.currentUser}
+              onLogin={this.handleLogin}
+              onRegister={this.handleRegister}
+              onUpdatePassword={this.handleUpdatePassword}
+              onLogout={this.handleLogout}
+            />
           </div>
         )}
       </appContext.Consumer>

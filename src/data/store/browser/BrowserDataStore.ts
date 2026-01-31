@@ -8,6 +8,12 @@ type CategoriesById = Map<number, Category>;
 type CategoriesByName = Map<string, number>;
 
 export class BrowserDataStore implements IDataStore {
+  private readonly userId: number;
+
+  constructor(userId = 0) {
+    this.userId = Number.isFinite(userId) ? Number(userId) : 0;
+  }
+
   // 持有单例的 IDB 连接
   private db: IDBDatabase | null = null;
 
@@ -36,13 +42,16 @@ export class BrowserDataStore implements IDataStore {
       // 初始化 IndexedDB，并在升级时创建表与索引
       const indexDB = new IndexDB({
         name: "articles",
-        version: 3,
+        version: 4,
         storeName: "article_meta",
         storeOptions: {keyPath: "document_id", autoIncrement: true},
         storeInit: (objectStore, db, transaction) => {
           // 文章元数据索引：名称/创建时间/更新时间/目录
           if (objectStore && !objectStore.indexNames.contains("name")) {
             objectStore.createIndex("name", "name", {unique: false});
+          }
+          if (objectStore && !objectStore.indexNames.contains("uid")) {
+            objectStore.createIndex("uid", "uid", {unique: false});
           }
           if (objectStore && !objectStore.indexNames.contains("createdAt")) {
             objectStore.createIndex("createdAt", "createdAt", {unique: false});
@@ -55,7 +64,13 @@ export class BrowserDataStore implements IDataStore {
           }
           // 文章正文存储
           if (db && !db.objectStoreNames.contains("article_content")) {
-            db.createObjectStore("article_content", {keyPath: "document_id"});
+            const contentStore = db.createObjectStore("article_content", {keyPath: "document_id"});
+            contentStore.createIndex("uid", "uid", {unique: false});
+          } else if (transaction && transaction.objectStoreNames.contains("article_content")) {
+            const contentStore = transaction.objectStore("article_content");
+            if (contentStore && !contentStore.indexNames.contains("uid")) {
+              contentStore.createIndex("uid", "uid", {unique: false});
+            }
           }
           // 目录表，带默认目录
           if (db) {
@@ -65,6 +80,9 @@ export class BrowserDataStore implements IDataStore {
               categoriesStore = db.createObjectStore("categories", {keyPath: "id", autoIncrement: true});
             } else if (transaction && transaction.objectStoreNames.contains("categories")) {
               categoriesStore = transaction.objectStore("categories");
+            }
+            if (categoriesStore && !categoriesStore.indexNames.contains("uid")) {
+              categoriesStore.createIndex("uid", "uid", {unique: false});
             }
             if (categoriesStore && !categoriesStore.indexNames.contains("name")) {
               categoriesStore.createIndex("name", "name", {unique: false});
@@ -82,8 +100,24 @@ export class BrowserDataStore implements IDataStore {
                 name: DEFAULT_CATEGORY_NAME,
                 createdAt: now,
                 updatedAt: now,
+                uid: this.userId,
               });
             }
+          }
+          // 用户表，便于与后端结构对齐（浏览器模式默认 uid = 0）
+          if (db && !db.objectStoreNames.contains("users")) {
+            const usersStore = db.createObjectStore("users", {keyPath: "id", autoIncrement: true});
+            usersStore.createIndex("account", "account", {unique: true});
+            const now = new Date();
+            usersStore.put({
+              id: 0,
+              account: "local",
+              registered_at: now,
+              last_login_at: now,
+              last_login_ip: "0.0.0.0",
+              status: 1,
+              updated_at: now,
+            });
           }
         },
       });
@@ -104,8 +138,12 @@ export class BrowserDataStore implements IDataStore {
       const store = transaction.objectStore("categories");
       const request = store.get(DEFAULT_CATEGORY_ID);
       request.onsuccess = () => {
-        if (request.result) {
-          resolve(request.result as Category);
+        const current = (request.result || null) as Category | null;
+        if (current) {
+          if (!current.uid && this.userId !== undefined) {
+            store.put({...current, uid: this.userId});
+          }
+          resolve(current);
           return;
         }
         const now = new Date();
@@ -114,6 +152,7 @@ export class BrowserDataStore implements IDataStore {
           name: DEFAULT_CATEGORY_NAME,
           createdAt: now,
           updatedAt: now,
+          uid: this.userId,
         };
         const addReq = store.add(payload);
         addReq.onsuccess = () => resolve(payload);
@@ -132,6 +171,19 @@ export class BrowserDataStore implements IDataStore {
     }
     const parsed = new Date(value as never).getTime();
     return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  private normalizeUid(value: unknown): number {
+    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    return 0;
+  }
+
+  private belongsToCurrentUser(uid: unknown): boolean {
+    return this.normalizeUid(uid) === this.userId;
   }
 
   private sortCategories(categories: Category[]): Category[] {
@@ -179,7 +231,10 @@ export class BrowserDataStore implements IDataStore {
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
         if (cursor) {
-          items.push(cursor.value as Category);
+          const value = cursor.value as Category;
+          if (this.belongsToCurrentUser((value as any).uid ?? 0)) {
+            items.push(value);
+          }
           cursor.continue();
         } else {
           resolve(this.sortCategories(items));
@@ -215,6 +270,10 @@ export class BrowserDataStore implements IDataStore {
           return;
         }
         const record = (cursor.value || {}) as DocumentMeta;
+        if (!this.belongsToCurrentUser((record as any).uid ?? 0)) {
+          cursor.continue();
+          return;
+        }
         const nextCategoryId = this.normalizeCategory(record.category, categoriesById, categoriesByName);
         if (record.category !== nextCategoryId) {
           cursor.update({...record, category: nextCategoryId});
@@ -252,6 +311,7 @@ export class BrowserDataStore implements IDataStore {
         name,
         createdAt: now,
         updatedAt: now,
+        uid: this.userId,
       });
       let createdId: number | null = null;
       request.onsuccess = (event) => {
@@ -267,6 +327,7 @@ export class BrowserDataStore implements IDataStore {
             name,
             createdAt: now,
             updatedAt: now,
+            uid: this.userId,
           });
         }
       };
@@ -291,6 +352,10 @@ export class BrowserDataStore implements IDataStore {
           resolve();
           return;
         }
+        if (!this.belongsToCurrentUser((current as any).uid ?? 0)) {
+          resolve();
+          return;
+        }
         store.put({
           ...current,
           name,
@@ -310,6 +375,21 @@ export class BrowserDataStore implements IDataStore {
     if (!db.objectStoreNames.contains("categories")) {
       return;
     }
+    const owned = await new Promise<Category | null>((resolve, reject) => {
+      const tx = db.transaction(["categories"], "readonly");
+      const store = tx.objectStore("categories");
+      const req = store.get(id);
+      req.onsuccess = () => {
+        const result = (req.result || null) as Category | null;
+        if (result && !this.belongsToCurrentUser((result as any).uid ?? 0)) {
+          resolve(null);
+          return;
+        }
+        resolve(result);
+      };
+      req.onerror = (event) => reject(event);
+    });
+    if (!owned) return;
     // 删除目录，同时将该目录下文章迁移到指定目录（默认迁移到默认目录）
     return new Promise((resolve, reject) => {
       const stores: string[] = ["categories"];
@@ -332,11 +412,13 @@ export class BrowserDataStore implements IDataStore {
           }
           const record = (cursor.value || {}) as DocumentMeta;
           const currentCategory = record.category;
+          const belongUser = this.belongsToCurrentUser((record as any).uid ?? 0);
           const shouldMove = currentCategory === id || currentCategory === String(id) || Number(currentCategory) === id;
-          if (shouldMove) {
+          if (shouldMove && belongUser) {
             cursor.update({
               ...record,
               category: reassignTo,
+              uid: this.userId,
             });
           }
           cursor.continue();
@@ -360,12 +442,17 @@ export class BrowserDataStore implements IDataStore {
       const metaStore = transaction.objectStore("article_meta");
       const contentStore = transaction.objectStore("article_content");
       let documentId: number | null = null;
-      const request = metaStore.add(meta);
+      const payload: DocumentMeta = {
+        ...meta,
+        uid: meta.uid ?? this.userId,
+      };
+      const request = metaStore.add(payload);
       request.onsuccess = (event) => {
         documentId = (event.target as IDBRequest<number>).result;
         contentStore.put({
           document_id: documentId,
           content,
+          uid: this.userId,
         });
       };
       request.onerror = (event) => reject(event);
@@ -391,7 +478,12 @@ export class BrowserDataStore implements IDataStore {
       const store = transaction.objectStore("article_meta");
       const request = store.get(documentId);
       request.onsuccess = () => {
-        resolve((request.result as DocumentMeta | undefined) || null);
+        const meta = (request.result as DocumentMeta | undefined) || null;
+        if (meta && this.belongsToCurrentUser((meta as any).uid ?? 0)) {
+          resolve(meta);
+        } else {
+          resolve(null);
+        }
       };
       request.onerror = () => resolve(null);
     });
@@ -414,10 +506,16 @@ export class BrowserDataStore implements IDataStore {
       const metaReq = metaStore.get(documentId);
       metaReq.onsuccess = () => {
         const current = (metaReq.result || {document_id: documentId}) as DocumentMeta;
+        const currentUid = (current as any).uid ?? this.userId;
+        if (!this.belongsToCurrentUser(currentUid)) {
+          resolve();
+          return;
+        }
         const payload: DocumentMeta = {
           ...current,
           ...updates,
           updatedAt: updates.updatedAt || new Date(),
+          uid: updates.uid ?? currentUid ?? this.userId,
         };
         if (!payload.category) {
           payload.category = DEFAULT_CATEGORY_ID;
@@ -578,7 +676,10 @@ export class BrowserDataStore implements IDataStore {
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
         if (cursor) {
-          items.push(cursor.value as DocumentMeta);
+          const value = cursor.value as DocumentMeta;
+          if (this.belongsToCurrentUser((value as any).uid ?? 0)) {
+            items.push(value);
+          }
           cursor.continue();
         } else {
           if (!useIndex) {
@@ -635,7 +736,10 @@ export class BrowserDataStore implements IDataStore {
         request.onsuccess = (event) => {
           const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
           if (cursor) {
-            all.push(cursor.value as DocumentMeta);
+            const value = cursor.value as DocumentMeta;
+            if (this.belongsToCurrentUser((value as any).uid ?? 0)) {
+              all.push(value);
+            }
             cursor.continue();
           } else {
             all.sort((a, b) => this.getTimeValue(b.createdAt) - this.getTimeValue(a.createdAt));
@@ -661,7 +765,10 @@ export class BrowserDataStore implements IDataStore {
           return;
         }
         if (items.length < limit) {
-          items.push(cursor.value as DocumentMeta);
+          const value = cursor.value as DocumentMeta;
+          if (this.belongsToCurrentUser((value as any).uid ?? 0)) {
+            items.push(value);
+          }
           cursor.continue();
           return;
         }
@@ -711,11 +818,13 @@ export class BrowserDataStore implements IDataStore {
             category: DEFAULT_CATEGORY_ID,
             createdAt,
             updatedAt,
+            uid: this.userId,
           };
           metaStore.put(meta);
           contentStore.put({
             document_id: documentId,
             content,
+            uid: this.userId,
           });
           cursor.continue();
         }

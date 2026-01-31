@@ -9,8 +9,6 @@ import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
 @inject("content")
 @observer
 class CategoryManageDialog extends Component {
-  dataStore = getDataStore();
-
   wasOpen = false;
 
   constructor(props) {
@@ -58,7 +56,10 @@ class CategoryManageDialog extends Component {
     }
     this.setState({loading: true});
     try {
-      const categories = await this.dataStore.listCategoriesWithCount();
+      const uid =
+        (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
+      const store = getDataStore("remote", Number(uid) || 0);
+      const categories = await store.listCategoriesWithCount();
       this.setState({categories});
     } catch (e) {
       console.error(e);
@@ -110,7 +111,10 @@ class CategoryManageDialog extends Component {
       return;
     }
     try {
-      await this.dataStore.createCategory(nextName);
+      const uid =
+        (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
+      const store = getDataStore("remote", Number(uid) || 0);
+      await store.createCategory(nextName);
       message.success("新建目录成功");
       this.closeCreate();
       this.loadCategories();
@@ -139,7 +143,10 @@ class CategoryManageDialog extends Component {
       return;
     }
     try {
-      await this.dataStore.renameCategory(renameId, nextName);
+      const uid =
+        (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
+      const store = getDataStore("remote", Number(uid) || 0);
+      await store.renameCategory(renameId, nextName);
       message.success("重命名成功");
       if (this.props.content.documentCategoryId === renameId) {
         this.props.content.setDocumentCategoryName(nextName);
@@ -173,7 +180,10 @@ class CategoryManageDialog extends Component {
 
   deleteCategory = async (category) => {
     try {
-      await this.dataStore.deleteCategory(category.id, {reassignTo: DEFAULT_CATEGORY_ID});
+      const uid =
+        (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
+      const store = getDataStore("remote", Number(uid) || 0);
+      await store.deleteCategory(category.id, {reassignTo: DEFAULT_CATEGORY_ID});
       if (this.props.content.documentCategoryId === category.id) {
         this.props.content.setDocumentCategory(DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME);
       }

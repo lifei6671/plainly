@@ -5,6 +5,7 @@ export interface Category {
   name: string;
   createdAt: TimestampValue;
   updatedAt: TimestampValue;
+  uid?: number;
 }
 
 export interface CategoryWithCount extends Category {
@@ -18,6 +19,7 @@ export interface DocumentMeta {
   createdAt: TimestampValue;
   updatedAt: TimestampValue;
   charCount?: number;
+  uid?: number;
 }
 
 export interface NewDocumentPayload {
@@ -26,6 +28,7 @@ export interface NewDocumentPayload {
   charCount?: number;
   createdAt: TimestampValue;
   updatedAt: TimestampValue;
+  uid?: number;
 }
 
 export interface UpdateDocumentMetaInput {
@@ -33,6 +36,32 @@ export interface UpdateDocumentMetaInput {
   category?: number;
   updatedAt?: TimestampValue;
   charCount?: number;
+  uid?: number;
+}
+
+export interface User {
+  id: number;
+  account: string;
+  password?: string;
+  registeredAt: TimestampValue;
+  lastLoginAt?: TimestampValue | null;
+  lastLoginIp?: string | null;
+  status?: number;
+  passwordChangedAt?: TimestampValue | null;
+  tokenVersion?: number;
+}
+
+export interface UserSession {
+  id: string;
+  userId: number;
+  deviceId?: string | null;
+  refreshTokenHash: string;
+  createdAt: TimestampValue;
+  expiresAt: TimestampValue;
+  revokedAt?: TimestampValue | null;
+  lastSeenAt?: TimestampValue | null;
+  ip?: string | null;
+  ua?: string | null;
 }
 
 export type DataStoreMode = "browser" | "remote" | "node" | "cloudflare" | "tauri";

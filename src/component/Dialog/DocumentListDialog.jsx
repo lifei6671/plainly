@@ -12,9 +12,6 @@ const ALL_CATEGORY_ID = "all";
 @inject("content")
 @observer
 class DocumentListDialog extends Component {
-  // Data store abstraction; keeps dialog agnostic to the storage backend.
-  dataStore = getDataStore();
-
   pageSize = 5;
 
   tableWrapRef = React.createRef();
@@ -45,6 +42,12 @@ class DocumentListDialog extends Component {
     }
   }
 
+  getDataStore() {
+    const uid =
+      (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
+    return getDataStore("remote", Number(uid) || 0);
+  }
+
   componentDidUpdate() {
     const isOpen = this.props.dialog.isDocumentListOpen;
     if (isOpen && !this.wasOpen) {
@@ -58,7 +61,7 @@ class DocumentListDialog extends Component {
 
   loadCategories = async () => {
     try {
-      const categories = await this.dataStore.listCategories();
+      const categories = await this.getDataStore().listCategories();
       this.setState({categories});
       return categories;
     } catch (e) {
@@ -143,12 +146,13 @@ class DocumentListDialog extends Component {
         items = filtered.slice(offset, offset + this.pageSize);
         hasMore = filtered.length > offset + this.pageSize;
       } else {
-        const pageResult = await this.dataStore.listDocumentsPage(offset, this.pageSize);
+        const pageResult = await this.getDataStore().listDocumentsPage(offset, this.pageSize);
         items = pageResult.items;
         hasMore = pageResult.hasMore;
       }
       if (items.some((item) => item && item.charCount == null)) {
-        items = await Promise.all(items.map((item) => this.dataStore.ensureDocumentCharCount(item)));
+        const store = this.getDataStore();
+        items = await Promise.all(items.map((item) => store.ensureDocumentCharCount(item)));
       }
       this.setState((prevState) => ({
         articles: reset ? items : prevState.articles.concat(items),
@@ -165,7 +169,7 @@ class DocumentListDialog extends Component {
 
   loadFilteredArticles = async () => {
     const categories = await this.loadCategories();
-    const items = await this.dataStore.listAllDocuments();
+    const items = await this.getDataStore().listAllDocuments();
     const normalizedItems = items.map((item) => ({
       ...item,
       category: this.normalizeCategoryId(item.category, categories),
@@ -226,7 +230,7 @@ class DocumentListDialog extends Component {
       return;
     }
     try {
-      const content = await this.dataStore.getDocumentContent(article.document_id);
+      const content = await this.getDataStore().getDocumentContent(article.document_id);
       const categoryInfo = await this.resolveCategoryInfo(article.category);
       this.props.content.setDocumentId(article.document_id);
       this.props.content.setDocumentName(article.name || "未命名.md");
@@ -289,7 +293,7 @@ class DocumentListDialog extends Component {
       okType: "danger",
       onOk: () =>
         new Promise((resolve, reject) => {
-          this.dataStore
+          this.getDataStore()
             .deleteDocument(article.document_id)
             .then(() => {
               this.setState((prevState) => ({
