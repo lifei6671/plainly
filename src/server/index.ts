@@ -308,6 +308,13 @@ async function main() {
     const store = ((req as any).auth as AuthContext).store;
     ok(res, await store.getDocumentContent(Number(req.params.id)));
   });
+  router.put("/documents/:id/content", async (req, res) => {
+    const store = ((req as any).auth as AuthContext).store;
+    const {content, updatedAt} = req.body || {};
+    if (typeof content !== "string") return fail(res, "content required");
+    await store.saveDocumentContent(Number(req.params.id), content, updatedAt);
+    ok(res, {});
+  });
   router.delete("/documents/:id", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
     await store.deleteDocument(Number(req.params.id));

@@ -207,6 +207,13 @@ class App extends Component {
       this.setState({currentUser: null});
       return;
     }
+    const runtimeUid =
+      (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
+    if (!runtimeUid) {
+      this.setRuntimeUser(null);
+      this.setState({currentUser: null});
+      return;
+    }
     try {
       const user = await this.apiRequest("/auth/refresh", "POST");
       const mapped = this.mapUser(user?.user);

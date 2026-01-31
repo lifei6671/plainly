@@ -9,8 +9,6 @@ import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
 @inject("content")
 @observer
 class RenameFileDialog extends Component {
-  dataStore = getDataStore();
-
   wasOpen = false;
 
   constructor(props) {
@@ -37,6 +35,12 @@ class RenameFileDialog extends Component {
     this.wasOpen = isOpen;
   }
 
+  getDataStore() {
+    const uid =
+      (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
+    return getDataStore(undefined, Number(uid) || 0);
+  }
+
   openDialog = async () => {
     this.resetNameFromStore();
     const categories = await this.loadCategories();
@@ -45,7 +49,7 @@ class RenameFileDialog extends Component {
 
   loadCategories = async () => {
     try {
-      const categories = await this.dataStore.listCategories();
+      const categories = await this.getDataStore().listCategories();
       this.setState({categories});
       return categories;
     } catch (e) {
@@ -89,7 +93,7 @@ class RenameFileDialog extends Component {
       return;
     }
     try {
-      const meta = await this.dataStore.getDocumentMeta(documentId);
+      const meta = await this.getDataStore().getDocumentMeta(documentId);
       const normalized = this.normalizeCategoryInfo(meta ? meta.category : null, categories);
       this.setState({categoryId: normalized.id});
       this.props.content.setDocumentCategory(normalized.id, normalized.name);
@@ -136,7 +140,7 @@ class RenameFileDialog extends Component {
     }
     try {
       const categoryId = this.state.categoryId || DEFAULT_CATEGORY_ID;
-      await this.dataStore.updateDocumentMeta(documentId, {
+      await this.getDataStore().updateDocumentMeta(documentId, {
         name: fileName,
         category: categoryId,
         updatedAt: new Date(),

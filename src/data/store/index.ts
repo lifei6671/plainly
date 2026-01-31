@@ -66,7 +66,8 @@ export function getDataStore(mode?: DataStoreMode, userId?: number): IDataStore 
   const resolvedUserId = userId ?? resolveDefaultUserId();
   const desiredMode = mode || resolveDefaultMode();
   const shouldForceBrowser =
-    (desiredMode === "remote" || desiredMode === "node") && (!resolvedUserId || resolvedUserId <= 0);
+    (desiredMode === "remote" && (!resolvedUserId || resolvedUserId <= 0)) ||
+    (desiredMode === "node" && (!resolvedUserId || resolvedUserId <= 0));
   const effectiveMode = shouldForceBrowser ? "browser" : desiredMode;
 
   if (!cachedStore || cachedMode !== effectiveMode || cachedUserId !== resolvedUserId) {

@@ -676,6 +676,29 @@ export class NodeDataStore implements IDataStore {
     return row?.content ?? "";
   }
 
+  async saveDocumentContent(documentId: number, content: string, updatedAt?: TimestampValue): Promise<void> {
+    this.ensureUserExists();
+    const nextUpdatedAt = toMillis(updatedAt ?? Date.now());
+    const charCount = content.length;
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO ${SQLiteTables.documentContent} (document_id, user_id, content)
+           VALUES (?, ?, ?)
+           ON CONFLICT(document_id, user_id) DO UPDATE SET content=excluded.content`,
+        )
+        .run(documentId, this.userId, content);
+      this.db
+        .prepare(
+          `UPDATE ${SQLiteTables.documents}
+           SET updated_at = ?, char_count = ?
+           WHERE id = ? AND user_id = ?`,
+        )
+        .run(nextUpdatedAt, charCount, documentId, this.userId);
+    });
+    tx();
+  }
+
   async deleteDocument(documentId: number): Promise<void> {
     this.ensureUserExists();
     const tx = this.db.transaction(() => {

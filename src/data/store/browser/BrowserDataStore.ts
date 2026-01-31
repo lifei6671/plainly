@@ -628,6 +628,45 @@ export class BrowserDataStore implements IDataStore {
   }
 
   /**
+   * 保存最新正文到本地（不保留历史版本）。
+   */
+  async saveDocumentContent(documentId: number, content: string, updatedAt?: TimestampValue): Promise<void> {
+    const db = await this.getDb();
+    if (!db.objectStoreNames.contains("article_content") || !db.objectStoreNames.contains("article_meta")) {
+      return;
+    }
+    const nextUpdatedAt = updatedAt ?? new Date();
+    const charCount = countVisibleChars(content);
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(["article_content", "article_meta"], "readwrite");
+      const contentStore = transaction.objectStore("article_content");
+      const metaStore = transaction.objectStore("article_meta");
+      contentStore.put({
+        document_id: documentId,
+        content,
+        uid: this.userId,
+      });
+      const metaReq = metaStore.get(documentId);
+      metaReq.onsuccess = () => {
+        const current = (metaReq.result || {document_id: documentId}) as DocumentMeta;
+        if (!this.belongsToCurrentUser((current as any).uid ?? this.userId)) {
+          resolve();
+          return;
+        }
+        metaStore.put({
+          ...current,
+          updatedAt: nextUpdatedAt,
+          charCount,
+          uid: (current as any).uid ?? this.userId,
+        });
+      };
+      metaReq.onerror = (event) => reject(event);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = (event) => reject(event);
+    });
+  }
+
+  /**
    * 删除文档元数据与正文，同时清理遗留表。
    */
   async deleteDocument(documentId: number): Promise<void> {

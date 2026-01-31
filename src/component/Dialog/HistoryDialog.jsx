@@ -6,6 +6,7 @@ import {AutoSaveInterval, getLocalDocuments, setLocalDocuments, setLocalDraft} f
 import IndexDB from "../LocalHistory/indexdb";
 import debouce from "lodash.debounce";
 import {markIndexDirty, scheduleIndexRebuild} from "../../search";
+import {getDataStore} from "../../data/store";
 import {countVisibleChars} from "../../utils/helper";
 import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
 
@@ -27,6 +28,31 @@ class HistoryDialog extends Component {
       documents: [],
     };
   }
+
+  resolveDataStoreMode() {
+    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
+      return import.meta.env.VITE_DATA_STORE;
+    }
+    if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
+      return window.__DATA_STORE_MODE__;
+    }
+    if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
+      return process.env.DATA_STORE_MODE;
+    }
+    return "browser";
+  }
+
+  getRuntimeUserId = () => {
+    if (typeof window === "undefined") return 0;
+    return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
+  };
+
+  getRemoteStore = () => {
+    if (this.resolveDataStoreMode() !== "remote") return null;
+    const uid = this.getRuntimeUserId();
+    if (!uid) return null;
+    return getDataStore("remote", Number(uid) || 0);
+  };
 
   async componentDidMount() {
     await this.initIndexDB();
@@ -98,6 +124,14 @@ class HistoryDialog extends Component {
       await setLocalDocumentMethod(this.db, this.state.documents, document);
       await this.overrideLocalDocuments(documentId);
       await this.saveArticleContent(documentId, Content, now);
+      const remoteStore = this.getRemoteStore();
+      if (remoteStore) {
+        try {
+          await remoteStore.saveDocumentContent(documentId, Content, now);
+        } catch (e) {
+          console.error(e);
+        }
+      }
       this.props.content.setDocumentUpdatedAt(now);
     }
   };
@@ -152,12 +186,15 @@ class HistoryDialog extends Component {
     try {
       const indexDB = new IndexDB({
         name: "articles",
-        version: 3,
+        version: 4,
         storeName: "article_meta",
         storeOptions: {keyPath: "document_id", autoIncrement: true},
         storeInit: (objectStore, db, transaction) => {
           if (objectStore && !objectStore.indexNames.contains("name")) {
             objectStore.createIndex("name", "name", {unique: false});
+          }
+          if (objectStore && !objectStore.indexNames.contains("uid")) {
+            objectStore.createIndex("uid", "uid", {unique: false});
           }
           if (objectStore && !objectStore.indexNames.contains("createdAt")) {
             objectStore.createIndex("createdAt", "createdAt", {unique: false});
@@ -169,7 +206,13 @@ class HistoryDialog extends Component {
             objectStore.createIndex("category", "category", {unique: false});
           }
           if (db && !db.objectStoreNames.contains("article_content")) {
-            db.createObjectStore("article_content", {keyPath: "document_id"});
+            const contentStore = db.createObjectStore("article_content", {keyPath: "document_id"});
+            contentStore.createIndex("uid", "uid", {unique: false});
+          } else if (transaction && transaction.objectStoreNames.contains("article_content")) {
+            const contentStore = transaction.objectStore("article_content");
+            if (contentStore && !contentStore.indexNames.contains("uid")) {
+              contentStore.createIndex("uid", "uid", {unique: false});
+            }
           }
           if (db) {
             const shouldCreate = !db.objectStoreNames.contains("categories");
@@ -178,6 +221,9 @@ class HistoryDialog extends Component {
               categoriesStore = db.createObjectStore("categories", {keyPath: "id", autoIncrement: true});
             } else if (transaction && transaction.objectStoreNames.contains("categories")) {
               categoriesStore = transaction.objectStore("categories");
+            }
+            if (categoriesStore && !categoriesStore.indexNames.contains("uid")) {
+              categoriesStore.createIndex("uid", "uid", {unique: false});
             }
             if (categoriesStore && !categoriesStore.indexNames.contains("name")) {
               categoriesStore.createIndex("name", "name", {unique: false});
@@ -195,8 +241,23 @@ class HistoryDialog extends Component {
                 name: DEFAULT_CATEGORY_NAME,
                 createdAt: now,
                 updatedAt: now,
+                uid: 0,
               });
             }
+          }
+          if (db && !db.objectStoreNames.contains("users")) {
+            const usersStore = db.createObjectStore("users", {keyPath: "id", autoIncrement: true});
+            usersStore.createIndex("account", "account", {unique: true});
+            const now = new Date();
+            usersStore.put({
+              id: 0,
+              account: "local",
+              registered_at: now,
+              last_login_at: now,
+              last_login_ip: "0.0.0.0",
+              status: 1,
+              updated_at: now,
+            });
           }
         },
       });

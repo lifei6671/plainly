@@ -56,6 +56,7 @@ export interface SQLiteCategoryRow {
 }
 
 export interface SQLiteSettingRow {
+  id: number;
   user_id: number;
   key: string;
   value: string | null;
@@ -157,10 +158,11 @@ export const SQLiteDDL = {
   `,
   settings: `
     CREATE TABLE IF NOT EXISTS ${SQLiteTables.settings} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
       key TEXT NOT NULL,
       value TEXT,
-      PRIMARY KEY (user_id, key),
+      UNIQUE (user_id, key),
       FOREIGN KEY (user_id) REFERENCES ${SQLiteTables.users}(id) ON DELETE CASCADE
     );
   `,

@@ -9,8 +9,6 @@ import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
 @inject("content")
 @observer
 class NewFileDialog extends Component {
-  dataStore = getDataStore();
-
   wasOpen = false;
 
   constructor(props) {
@@ -38,9 +36,15 @@ class NewFileDialog extends Component {
     this.wasOpen = isOpen;
   }
 
+  getDataStore() {
+    const uid =
+      (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
+    return getDataStore(undefined, Number(uid) || 0);
+  }
+
   loadCategories = async () => {
     try {
-      const categories = await this.dataStore.listCategories();
+      const categories = await this.getDataStore().listCategories();
       this.setState({categories});
       return categories;
     } catch (e) {
@@ -87,7 +91,7 @@ class NewFileDialog extends Component {
     try {
       const now = new Date();
       const categoryId = this.state.categoryId || DEFAULT_CATEGORY_ID;
-      const documentId = await this.dataStore.createDocument(
+      const documentId = await this.getDataStore().createDocument(
         {
           name: fileName,
           charCount: 0,

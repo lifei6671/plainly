@@ -99,6 +99,10 @@ export class RemoteDataStore implements IDataStore {
     return this.request<string>(`/documents/${documentId}/content`);
   }
 
+  saveDocumentContent(documentId: number, content: string, updatedAt?: number | string | Date): Promise<void> {
+    return this.request<void>(`/documents/${documentId}/content`, "PUT", {content, updatedAt});
+  }
+
   deleteDocument(documentId: number): Promise<void> {
     return this.request<void>(`/documents/${documentId}`, "DELETE");
   }

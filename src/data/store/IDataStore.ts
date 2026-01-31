@@ -24,6 +24,7 @@ export interface IDataStore {
   listAllDocuments(): Promise<DocumentMeta[]>;
   ensureDocumentCharCount(meta: DocumentMeta): Promise<DocumentMeta>;
   getDocumentContent(documentId: number): Promise<string>;
+  saveDocumentContent(documentId: number, content: string, updatedAt?: TimestampValue): Promise<void>;
   deleteDocument(documentId: number): Promise<void>;
   /**
    * 轻量配置读取：抽象 localStorage / KV / 文件等环境差异
