@@ -1,14 +1,14 @@
 import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Modal, Table, Button, Input, message} from "antd";
-import IndexDB from "../LocalHistory/indexdb";
+import {getDataStore} from "../../data/store";
 import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
 
 @inject("dialog")
 @inject("content")
 @observer
 class CategoryManageDialog extends Component {
-  db = null;
+  dataStore = getDataStore();
 
   wasOpen = false;
 
@@ -26,7 +26,6 @@ class CategoryManageDialog extends Component {
   }
 
   componentDidMount() {
-    this.initIndexDB();
     this.wasOpen = this.props.dialog.isCategoryManageOpen;
     if (this.wasOpen) {
       this.loadCategories();
@@ -41,75 +40,6 @@ class CategoryManageDialog extends Component {
     this.wasOpen = isOpen;
   }
 
-  initIndexDB = async () => {
-    try {
-      const indexDB = new IndexDB({
-        name: "articles",
-        version: 3,
-        storeName: "article_meta",
-        storeOptions: {keyPath: "document_id", autoIncrement: true},
-        storeInit: (objectStore, db, transaction) => {
-          if (objectStore && !objectStore.indexNames.contains("name")) {
-            objectStore.createIndex("name", "name", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("createdAt")) {
-            objectStore.createIndex("createdAt", "createdAt", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("updatedAt")) {
-            objectStore.createIndex("updatedAt", "updatedAt", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("category")) {
-            objectStore.createIndex("category", "category", {unique: false});
-          }
-          if (db && !db.objectStoreNames.contains("article_content")) {
-            db.createObjectStore("article_content", {keyPath: "document_id"});
-          }
-          if (db) {
-            const shouldCreate = !db.objectStoreNames.contains("categories");
-            let categoriesStore = null;
-            if (shouldCreate) {
-              categoriesStore = db.createObjectStore("categories", {keyPath: "id", autoIncrement: true});
-            } else if (transaction && transaction.objectStoreNames.contains("categories")) {
-              categoriesStore = transaction.objectStore("categories");
-            }
-            if (categoriesStore && !categoriesStore.indexNames.contains("name")) {
-              categoriesStore.createIndex("name", "name", {unique: false});
-            }
-            if (categoriesStore && !categoriesStore.indexNames.contains("createdAt")) {
-              categoriesStore.createIndex("createdAt", "createdAt", {unique: false});
-            }
-            if (categoriesStore && !categoriesStore.indexNames.contains("updatedAt")) {
-              categoriesStore.createIndex("updatedAt", "updatedAt", {unique: false});
-            }
-            if (shouldCreate && categoriesStore) {
-              const now = new Date();
-              categoriesStore.add({
-                id: DEFAULT_CATEGORY_ID,
-                name: DEFAULT_CATEGORY_NAME,
-                createdAt: now,
-                updatedAt: now,
-              });
-            }
-          }
-        },
-      });
-      this.db = await indexDB.init();
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  getTimeValue = (value) => {
-    if (value instanceof Date) {
-      return value.getTime();
-    }
-    if (value == null) {
-      return 0;
-    }
-    const parsed = new Date(value).getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
-  };
-
   formatTime = (value) => {
     if (!value) {
       return "-";
@@ -121,141 +51,14 @@ class CategoryManageDialog extends Component {
     return date.toLocaleString();
   };
 
-  ensureDefaultCategory = async () => {
-    if (!this.db || !this.db.objectStoreNames.contains("categories")) {
-      return null;
-    }
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(["categories"], "readwrite");
-      const store = transaction.objectStore("categories");
-      const request = store.get(DEFAULT_CATEGORY_ID);
-      request.onsuccess = () => {
-        if (request.result) {
-          resolve(request.result);
-          return;
-        }
-        const now = new Date();
-        const payload = {
-          id: DEFAULT_CATEGORY_ID,
-          name: DEFAULT_CATEGORY_NAME,
-          createdAt: now,
-          updatedAt: now,
-        };
-        const addReq = store.add(payload);
-        addReq.onsuccess = () => resolve(payload);
-        addReq.onerror = () => resolve(payload);
-      };
-      request.onerror = (event) => reject(event);
-    });
-  };
-
-  fetchCategories = () => {
-    if (!this.db || !this.db.objectStoreNames.contains("categories")) {
-      return Promise.resolve([]);
-    }
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(["categories"], "readonly");
-      const store = transaction.objectStore("categories");
-      const items = [];
-      const request = store.openCursor();
-      request.onsuccess = (event) => {
-        const cursor = event.target.result;
-        if (cursor) {
-          items.push(cursor.value);
-          cursor.continue();
-        } else {
-          resolve(items);
-        }
-      };
-      request.onerror = (event) => reject(event);
-    });
-  };
-
-  getCategoryStats = (categories) => {
-    if (!this.db || !this.db.objectStoreNames.contains("article_meta")) {
-      return Promise.resolve(
-        categories.map((category) => ({
-          ...category,
-          count: 0,
-        })),
-      );
-    }
-    const categoriesById = new Map();
-    const categoriesByName = new Map();
-    categories.forEach((category) => {
-      categoriesById.set(category.id, category);
-      if (category.name) {
-        categoriesByName.set(category.name, category.id);
-      }
-    });
-    const counts = new Map();
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(["article_meta"], "readwrite");
-      const store = transaction.objectStore("article_meta");
-      const request = store.openCursor();
-      request.onsuccess = (event) => {
-        const cursor = event.target.result;
-        if (!cursor) {
-          return;
-        }
-        const record = cursor.value || {};
-        const current = record.category;
-        let nextCategoryId = DEFAULT_CATEGORY_ID;
-        if (typeof current === "number") {
-          nextCategoryId = categoriesById.has(current) ? current : DEFAULT_CATEGORY_ID;
-        } else if (typeof current === "string" && current.trim()) {
-          const trimmed = current.trim();
-          if (categoriesByName.has(trimmed)) {
-            nextCategoryId = categoriesByName.get(trimmed);
-          } else {
-            const parsed = Number(trimmed);
-            nextCategoryId = categoriesById.has(parsed) ? parsed : DEFAULT_CATEGORY_ID;
-          }
-        }
-        if (current !== nextCategoryId) {
-          cursor.update({...record, category: nextCategoryId});
-        }
-        counts.set(nextCategoryId, (counts.get(nextCategoryId) || 0) + 1);
-        cursor.continue();
-      };
-      request.onerror = (event) => reject(event);
-      transaction.oncomplete = () => {
-        const enriched = categories.map((category) => ({
-          ...category,
-          count: counts.get(category.id) || 0,
-        }));
-        resolve(enriched);
-      };
-      transaction.onerror = (event) => reject(event);
-    });
-  };
-
   loadCategories = async () => {
     if (this.state.loading) {
       return;
     }
     this.setState({loading: true});
     try {
-      if (!this.db) {
-        await this.initIndexDB();
-      }
-      if (!this.db) {
-        message.error("初始化数据库失败");
-        return;
-      }
-      await this.ensureDefaultCategory();
-      const categories = await this.fetchCategories();
-      const enriched = await this.getCategoryStats(categories);
-      const sorted = enriched.sort((a, b) => {
-        if (a.id === DEFAULT_CATEGORY_ID) {
-          return -1;
-        }
-        if (b.id === DEFAULT_CATEGORY_ID) {
-          return 1;
-        }
-        return this.getTimeValue(a.createdAt) - this.getTimeValue(b.createdAt);
-      });
-      this.setState({categories: sorted});
+      const categories = await this.dataStore.listCategoriesWithCount();
+      this.setState({categories});
     } catch (e) {
       console.error(e);
       message.error("加载目录失败");
@@ -305,26 +108,8 @@ class CategoryManageDialog extends Component {
       message.error("目录名称已存在");
       return;
     }
-    if (!this.db) {
-      await this.initIndexDB();
-    }
-    if (!this.db) {
-      message.error("初始化数据库失败");
-      return;
-    }
     try {
-      await new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(["categories"], "readwrite");
-        const store = transaction.objectStore("categories");
-        const now = new Date();
-        store.add({
-          name: nextName,
-          createdAt: now,
-          updatedAt: now,
-        });
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = (event) => reject(event);
-      });
+      await this.dataStore.createCategory(nextName);
       message.success("新建目录成功");
       this.closeCreate();
       this.loadCategories();
@@ -352,30 +137,8 @@ class CategoryManageDialog extends Component {
       message.error("目录名称已存在");
       return;
     }
-    if (!this.db) {
-      await this.initIndexDB();
-    }
-    if (!this.db) {
-      message.error("初始化数据库失败");
-      return;
-    }
     try {
-      await new Promise((resolve, reject) => {
-        const transaction = this.db.transaction(["categories"], "readwrite");
-        const store = transaction.objectStore("categories");
-        const request = store.get(renameId);
-        request.onsuccess = () => {
-          const current = request.result;
-          if (!current) {
-            resolve();
-            return;
-          }
-          store.put({...current, name: nextName, updatedAt: new Date()});
-        };
-        request.onerror = (event) => reject(event);
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = (event) => reject(event);
-      });
+      await this.dataStore.renameCategory(renameId, nextName);
       message.success("重命名成功");
       if (this.props.content.documentCategoryId === renameId) {
         this.props.content.setDocumentCategoryName(nextName);
@@ -403,52 +166,22 @@ class CategoryManageDialog extends Component {
       okText: "删除",
       cancelText: "取消",
       okType: "danger",
-      onOk: () => this.deleteCategory(category, hasFiles),
+      onOk: () => this.deleteCategory(category),
     });
   };
 
-  deleteCategory = async (category, shouldMove) => {
-    if (!this.db) {
-      await this.initIndexDB();
-    }
-    if (!this.db) {
-      message.error("初始化数据库失败");
-      return;
-    }
-    await new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(["categories", "article_meta"], "readwrite");
-      const categoryStore = transaction.objectStore("categories");
-      const metaStore = transaction.objectStore("article_meta");
-      categoryStore.delete(category.id);
-      if (shouldMove) {
-        const request = metaStore.openCursor();
-        request.onsuccess = (event) => {
-          const cursor = event.target.result;
-          if (!cursor) {
-            return;
-          }
-          const record = cursor.value || {};
-          const current = record.category;
-          if (current === category.id || current === category.name || Number(current) === category.id) {
-            cursor.update({...record, category: DEFAULT_CATEGORY_ID});
-          }
-          cursor.continue();
-        };
-        request.onerror = (event) => reject(event);
+  deleteCategory = async (category) => {
+    try {
+      await this.dataStore.deleteCategory(category.id, {reassignTo: DEFAULT_CATEGORY_ID});
+      if (this.props.content.documentCategoryId === category.id) {
+        this.props.content.setDocumentCategory(DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME);
       }
-      transaction.oncomplete = () => {
-        if (this.props.content.documentCategoryId === category.id) {
-          this.props.content.setDocumentCategory(DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME);
-        }
-        message.success("删除成功");
-        this.loadCategories();
-        resolve();
-      };
-      transaction.onerror = (event) => {
-        message.error("删除失败");
-        reject(event);
-      };
-    });
+      message.success("删除成功");
+      this.loadCategories();
+    } catch (e) {
+      console.error(e);
+      message.error("删除失败");
+    }
   };
 
   render() {

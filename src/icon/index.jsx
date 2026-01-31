@@ -18,7 +18,7 @@ import FontCase from "./FontCase";
 import Replace from "./Replace";
 import ReplaceAll from "./ReplaceAll";
 
-export default (props) => {
+export default function(props) {
   switch (props.name) {
     case "copy":
       return <Copy {...props} />;
@@ -57,4 +57,4 @@ export default (props) => {
     default:
       return <svg />;
   }
-};
+}

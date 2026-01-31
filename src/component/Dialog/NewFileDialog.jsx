@@ -1,15 +1,15 @@
 import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Modal, Input, Form, Select, message} from "antd";
-import IndexDB from "../LocalHistory/indexdb";
 import {markIndexDirty, scheduleIndexRebuild} from "../../search";
+import {getDataStore} from "../../data/store";
 import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
 
 @inject("dialog")
 @inject("content")
 @observer
 class NewFileDialog extends Component {
-  db = null;
+  dataStore = getDataStore();
 
   wasOpen = false;
 
@@ -23,7 +23,6 @@ class NewFileDialog extends Component {
   }
 
   componentDidMount() {
-    this.initIndexDB();
     this.wasOpen = this.props.dialog.isNewFileOpen;
     if (this.wasOpen) {
       this.loadCategories();
@@ -39,146 +38,11 @@ class NewFileDialog extends Component {
     this.wasOpen = isOpen;
   }
 
-  initIndexDB = async () => {
-    try {
-      const indexDB = new IndexDB({
-        name: "articles",
-        version: 3,
-        storeName: "article_meta",
-        storeOptions: {keyPath: "document_id", autoIncrement: true},
-        storeInit: (objectStore, db, transaction) => {
-          if (objectStore && !objectStore.indexNames.contains("name")) {
-            objectStore.createIndex("name", "name", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("createdAt")) {
-            objectStore.createIndex("createdAt", "createdAt", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("updatedAt")) {
-            objectStore.createIndex("updatedAt", "updatedAt", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("category")) {
-            objectStore.createIndex("category", "category", {unique: false});
-          }
-          if (db && !db.objectStoreNames.contains("article_content")) {
-            db.createObjectStore("article_content", {keyPath: "document_id"});
-          }
-          if (db) {
-            const shouldCreate = !db.objectStoreNames.contains("categories");
-            let categoriesStore = null;
-            if (shouldCreate) {
-              categoriesStore = db.createObjectStore("categories", {keyPath: "id", autoIncrement: true});
-            } else if (transaction && transaction.objectStoreNames.contains("categories")) {
-              categoriesStore = transaction.objectStore("categories");
-            }
-            if (categoriesStore && !categoriesStore.indexNames.contains("name")) {
-              categoriesStore.createIndex("name", "name", {unique: false});
-            }
-            if (categoriesStore && !categoriesStore.indexNames.contains("createdAt")) {
-              categoriesStore.createIndex("createdAt", "createdAt", {unique: false});
-            }
-            if (categoriesStore && !categoriesStore.indexNames.contains("updatedAt")) {
-              categoriesStore.createIndex("updatedAt", "updatedAt", {unique: false});
-            }
-            if (shouldCreate && categoriesStore) {
-              const now = new Date();
-              categoriesStore.add({
-                id: DEFAULT_CATEGORY_ID,
-                name: DEFAULT_CATEGORY_NAME,
-                createdAt: now,
-                updatedAt: now,
-              });
-            }
-          }
-        },
-      });
-      this.db = await indexDB.init();
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  ensureDefaultCategory = async () => {
-    if (!this.db || !this.db.objectStoreNames.contains("categories")) {
-      return null;
-    }
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(["categories"], "readwrite");
-      const store = transaction.objectStore("categories");
-      const request = store.get(DEFAULT_CATEGORY_ID);
-      request.onsuccess = () => {
-        if (request.result) {
-          resolve(request.result);
-          return;
-        }
-        const now = new Date();
-        const payload = {
-          id: DEFAULT_CATEGORY_ID,
-          name: DEFAULT_CATEGORY_NAME,
-          createdAt: now,
-          updatedAt: now,
-        };
-        const addReq = store.add(payload);
-        addReq.onsuccess = () => resolve(payload);
-        addReq.onerror = () => resolve(payload);
-      };
-      request.onerror = (event) => reject(event);
-    });
-  };
-
-  fetchCategories = () => {
-    if (!this.db || !this.db.objectStoreNames.contains("categories")) {
-      return Promise.resolve([]);
-    }
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(["categories"], "readonly");
-      const store = transaction.objectStore("categories");
-      const items = [];
-      const request = store.openCursor();
-      request.onsuccess = (event) => {
-        const cursor = event.target.result;
-        if (cursor) {
-          items.push(cursor.value);
-          cursor.continue();
-        } else {
-          resolve(items);
-        }
-      };
-      request.onerror = (event) => reject(event);
-    });
-  };
-
-  getTimeValue = (value) => {
-    if (value instanceof Date) {
-      return value.getTime();
-    }
-    if (value == null) {
-      return 0;
-    }
-    const parsed = new Date(value).getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
-  };
-
   loadCategories = async () => {
     try {
-      if (!this.db) {
-        await this.initIndexDB();
-      }
-      if (!this.db) {
-        return [];
-      }
-      await this.ensureDefaultCategory();
-      const categories = await this.fetchCategories();
-      const sorted = categories.sort((a, b) => {
-        if (a.id === DEFAULT_CATEGORY_ID) {
-          return -1;
-        }
-        if (b.id === DEFAULT_CATEGORY_ID) {
-          return 1;
-        }
-        return this.getTimeValue(a.createdAt) - this.getTimeValue(b.createdAt);
-      });
-      this.setState({categories: sorted});
-      return sorted;
+      const categories = await this.dataStore.listCategories();
+      this.setState({categories});
+      return categories;
     } catch (e) {
       console.error(e);
       return [];
@@ -204,29 +68,6 @@ class NewFileDialog extends Component {
     return `${normalized}.md`;
   };
 
-  saveArticle = (meta, content) => {
-    if (!this.db) {
-      return Promise.reject(new Error("indexeddb not ready"));
-    }
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(["article_meta", "article_content"], "readwrite");
-      const metaStore = transaction.objectStore("article_meta");
-      const contentStore = transaction.objectStore("article_content");
-      let documentId = null;
-      const req = metaStore.add(meta);
-      req.onsuccess = (event) => {
-        documentId = event.target.result;
-        contentStore.put({
-          document_id: documentId,
-          content,
-        });
-      };
-      req.onerror = (event) => reject(event);
-      transaction.oncomplete = () => resolve(documentId);
-      transaction.onerror = (event) => reject(event);
-    });
-  };
-
   clearEditor = () => {
     const {markdownEditor} = this.props.content;
     this.props.content.setContent("");
@@ -242,18 +83,11 @@ class NewFileDialog extends Component {
       message.error("请输入文件名称");
       return;
     }
-    if (!this.db) {
-      await this.initIndexDB();
-    }
-    if (!this.db) {
-      message.error("初始化数据库失败");
-      return;
-    }
 
     try {
       const now = new Date();
       const categoryId = this.state.categoryId || DEFAULT_CATEGORY_ID;
-      const documentId = await this.saveArticle(
+      const documentId = await this.dataStore.createDocument(
         {
           name: fileName,
           charCount: 0,

@@ -4,9 +4,7 @@ export default {
 
     if (response.status === 404) {
       const accept = request.headers.get("Accept") || "";
-      const isHtmlRequest =
-        (request.method === "GET" || request.method === "HEAD") &&
-        accept.includes("text/html");
+      const isHtmlRequest = (request.method === "GET" || request.method === "HEAD") && accept.includes("text/html");
 
       if (isHtmlRequest) {
         const url = new URL(request.url);

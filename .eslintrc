@@ -1,7 +1,7 @@
 {
   "extends": ["airbnb", "plugin:prettier/recommended"], // eslint扩展规则
   "parserOptions": {
-    "ecmaVersion": 7,
+    "ecmaVersion": 2020,
     "sourceType": "module",
     "ecmaFeatures": {
       "jsx": true
@@ -14,7 +14,7 @@
     "browser": true,
     "node": true
   },
-  "plugins": ["react", "jsx-a11y", "import"],
+  "plugins": ["react", "react-hooks", "jsx-a11y", "import"],
   "settings": {
     "import/resolver": {
       "node": {

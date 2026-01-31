@@ -80,14 +80,14 @@ class SearchBox extends React.Component {
     markdownEditor.scrollTo(null, top + offset);
   };
 
-  componentWillUnmount = () => {
+  componentWillUnmount() {
     this.handleScroll(this.state.isReplaceOpen ? -72 : -40);
-  };
+  }
 
-  componentDidMount = () => {
+  componentDidMount() {
     this.searchRef.current.focus();
     this.handleScroll(40);
-  };
+  }
 
   clearMarks = () => {
     const {markdownEditor} = this.props.content;

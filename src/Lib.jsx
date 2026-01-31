@@ -63,7 +63,6 @@ class Lib extends Component {
             icon={<SvgIcon name="smile" style={style.svgIcon} />}
             title="请使用 PC 端打开排版工具"
             subTitle="更多 Markdown Nice 信息，请更多查看 https://github.com/lifei6671/markdown-nice"
-          
           />
         )}
       </Provider>
