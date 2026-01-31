@@ -2,6 +2,7 @@ import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Input, Select, Form} from "antd";
 import {QINIUOSS_IMAGE_HOSTING} from "../../utils/constant";
+import {getDataStore} from "../../data/store";
 
 const {Option} = Select;
 const formItemLayout = {
@@ -16,43 +17,61 @@ const formItemLayout = {
 @inject("imageHosting")
 @observer
 class QiniuOSS extends Component {
+  dataStore = getDataStore();
+
   constructor(props) {
     super(props);
-    // 从localstorage里面读取
-    const imageHosting = JSON.parse(localStorage.getItem(QINIUOSS_IMAGE_HOSTING));
-    const link = imageHosting.domain.split("://")[1];
     this.state = {
-      imageHosting,
-      link,
+      imageHosting: {
+        bucket: "",
+        region: "",
+        accessKey: "",
+        secretKey: "",
+        domain: "https://",
+        namespace: "",
+      },
+      link: "",
     };
   }
+
+  async componentDidMount() {
+    await this.dataStore.init?.();
+    const stored = (await this.dataStore.getConfig(QINIUOSS_IMAGE_HOSTING)) || {};
+    const imageHosting = {...this.state.imageHosting, ...stored};
+    const link = (imageHosting.domain || "https://").split("://")[1] || "";
+    this.setState({imageHosting, link});
+  }
+
+  persistConfig = (nextConfig) => {
+    this.dataStore.setConfig(QINIUOSS_IMAGE_HOSTING, nextConfig).catch(console.error);
+  };
 
   regionChange = (value) => {
     const {imageHosting} = this.state;
     imageHosting.region = value;
     this.setState({imageHosting});
-    localStorage.setItem(QINIUOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   accessKeyChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.accessKey = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(QINIUOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   secretKeyChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.secretKey = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(QINIUOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   bucketChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.bucket = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(QINIUOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   linkChange = (e) => {
@@ -61,14 +80,14 @@ class QiniuOSS extends Component {
     const {imageHosting} = this.state;
     imageHosting.domain = "https://" + e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(QINIUOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   namespaceChange = ({target: {value}}) => {
     const {imageHosting} = this.state;
     imageHosting.namespace = value;
     this.setState({imageHosting});
-    localStorage.setItem(QINIUOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   render() {

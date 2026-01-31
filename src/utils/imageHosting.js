@@ -23,6 +23,7 @@ import {invoke} from "@tauri-apps/api/tauri";
 import createQiniuUploadToken from "./qiuniu";
 import compressThenWebp from "./imageCompress";
 import renderObjectName from "./imageFilename";
+import {getConfigSync} from "./configStore";
 
 function isTauriEnv() {
   if (typeof window === "undefined") {
@@ -104,7 +105,7 @@ function hideUploadNoti() {
 }
 
 function writeToEditor({content, image}) {
-  const isContainImgName = window.localStorage.getItem(IS_CONTAIN_IMG_NAME) === "true";
+  const isContainImgName = Boolean(getConfigSync(IS_CONTAIN_IMG_NAME, false));
   console.log(isContainImgName);
   let text = "";
   if (isContainImgName) {
@@ -128,7 +129,7 @@ export const qiniuOSSUpload = async ({
   content = null, // store content
 }) => {
   showUploadNoti();
-  const config = JSON.parse(window.localStorage.getItem(QINIUOSS_IMAGE_HOSTING));
+  const config = getConfigSync(QINIUOSS_IMAGE_HOSTING, {}) || {};
   try {
     let {domain} = config;
     const {namespace} = config;
@@ -297,7 +298,7 @@ export const smmsUpload = ({
     ...headers,
   };
   if (!requestHeaders.Authorization) {
-    const token = window.localStorage.getItem(SM_MS_TOKEN);
+    const token = getConfigSync(SM_MS_TOKEN, "");
     if (token) {
       requestHeaders.Authorization = token;
     }
@@ -411,7 +412,7 @@ export const aliOSSUpload = async ({
   content = null, // store content
 }) => {
   showUploadNoti();
-  const config = JSON.parse(window.localStorage.getItem(ALIOSS_IMAGE_HOSTING));
+  const config = getConfigSync(ALIOSS_IMAGE_HOSTING, {}) || {};
   if (isTauriEnv()) {
     try {
       const uploadFile = file && file.originFileObj ? file.originFileObj : file;
@@ -507,7 +508,7 @@ export const r2Upload = async ({
 }) => {
   showUploadNoti();
   try {
-    const config = JSON.parse(window.localStorage.getItem(R2_IMAGE_HOSTING));
+    const config = getConfigSync(R2_IMAGE_HOSTING, {}) || {};
     if (!config.accountId || !config.accessKeyId || !config.secretAccessKey || !config.bucket) {
       throw new Error("请先配置 Cloudflare R2 图床");
     }
@@ -634,21 +635,21 @@ export const r2Upload = async ({
 
 // 自动检测上传配置，进行上传
 export const uploadAdaptor = (...args) => {
-  const type = localStorage.getItem(IMAGE_HOSTING_TYPE); // SM.MS | 阿里云 | 七牛云 | 用户自定义图床
+  const type = getConfigSync(IMAGE_HOSTING_TYPE, ""); // SM.MS | 阿里云 | 七牛云 | 用户自定义图床
   const userType = imageHosting.hostingName;
   if (type === userType) {
     return customImageUpload(...args);
   } else if (type === IMAGE_HOSTING_NAMES.smms) {
     return smmsUpload(...args);
   } else if (type === IMAGE_HOSTING_NAMES.r2) {
-    const config = JSON.parse(window.localStorage.getItem(R2_IMAGE_HOSTING));
+    const config = getConfigSync(R2_IMAGE_HOSTING, {}) || {};
     if (!config.accountId || !config.accessKeyId || !config.secretAccessKey || !config.bucket) {
       message.error("请先配置 Cloudflare R2 图床");
       return false;
     }
     return r2Upload(...args);
   } else if (type === IMAGE_HOSTING_NAMES.qiniuyun) {
-    const config = JSON.parse(window.localStorage.getItem(QINIUOSS_IMAGE_HOSTING));
+    const config = getConfigSync(QINIUOSS_IMAGE_HOSTING, {}) || {};
     if (
       !config.region.length ||
       !config.accessKey.length ||
@@ -661,7 +662,7 @@ export const uploadAdaptor = (...args) => {
     }
     return qiniuOSSUpload(...args);
   } else if (type === IMAGE_HOSTING_NAMES.aliyun) {
-    const config = JSON.parse(window.localStorage.getItem(ALIOSS_IMAGE_HOSTING));
+    const config = getConfigSync(ALIOSS_IMAGE_HOSTING, {}) || {};
     if (
       !config.region.length ||
       !config.accessKeyId.length ||

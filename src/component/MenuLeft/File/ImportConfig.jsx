@@ -2,6 +2,7 @@ import React, {Component} from "react";
 import {message} from "antd";
 
 import "../common.css";
+import {removeConfigSync, setConfigSync} from "../../../utils/configStore";
 
 class ImportConfig extends Component {
   handleChange = (e) => {
@@ -26,10 +27,10 @@ class ImportConfig extends Component {
       Object.keys(data).forEach((key) => {
         const value = data[key];
         if (value === null || value === undefined) {
-          window.localStorage.removeItem(key);
+          removeConfigSync(key);
           return;
         }
-        window.localStorage.setItem(key, String(value));
+        setConfigSync(key, value);
       });
       message.success("导入配置成功，即将刷新页面！");
       setTimeout(() => {

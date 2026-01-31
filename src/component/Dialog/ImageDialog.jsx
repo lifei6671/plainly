@@ -12,6 +12,7 @@ import R2 from "../ImageHosting/R2";
 import {uploadAdaptor} from "../../utils/imageHosting";
 import {SM_MS_PROXY, IMAGE_HOSTING_TYPE, IMAGE_HOSTING_NAMES} from "../../utils/constant";
 import appContext from "../../utils/appContext";
+import {setConfigSync} from "../../utils/configStore";
 
 const {Dragger} = Upload;
 const {TabPane} = Tabs;
@@ -98,7 +99,7 @@ class ImageDialog extends Component {
 
   typeChange = (type) => {
     this.props.imageHosting.setType(type);
-    window.localStorage.setItem(IMAGE_HOSTING_TYPE, type);
+    setConfigSync(IMAGE_HOSTING_TYPE, type);
   };
 
   render() {

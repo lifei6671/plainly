@@ -6,6 +6,7 @@ import {axiosGithub} from "../../utils/helper";
 import {ACCESS_TOKEN} from "../../utils/constant";
 import SvgIcon from "../../icon";
 import "./User.css";
+import {setConfigSync} from "../../utils/configStore";
 
 @inject("userInfo")
 @inject("dialog")
@@ -54,7 +55,7 @@ class LogIn extends React.Component {
   };
 
   signOut = () => {
-    window.localStorage.setItem(ACCESS_TOKEN, "");
+    setConfigSync(ACCESS_TOKEN, "");
     window.location.href = "/";
   };
 

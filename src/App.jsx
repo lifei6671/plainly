@@ -32,6 +32,7 @@ import pluginCenter from "./utils/pluginCenter";
 import appContext from "./utils/appContext";
 import {uploadAdaptor} from "./utils/imageHosting";
 import bindHotkeys, {betterTab, rightClick} from "./utils/hotkey";
+import {getConfigSync, setConfigSync} from "./utils/configStore";
 
 @inject("content")
 @inject("navbar")
@@ -133,8 +134,9 @@ class App extends Component {
     }
 
     // 第一次进入没有默认图床时
-    if (window.localStorage.getItem(IMAGE_HOSTING_TYPE) === null) {
-      let type;
+    const storedType = getConfigSync(IMAGE_HOSTING_TYPE, null);
+    if (storedType === null) {
+      let type = "";
       if (name) {
         type = name;
       } else if (isSmmsOpen) {
@@ -144,8 +146,12 @@ class App extends Component {
       } else if (isQiniuyunOpen) {
         type = IMAGE_HOSTING_NAMES.qiniuyun;
       }
-      this.props.imageHosting.setType(type);
-      window.localStorage.setItem(IMAGE_HOSTING_TYPE, type);
+      if (type) {
+        this.props.imageHosting.setType(type);
+        setConfigSync(IMAGE_HOSTING_TYPE, type);
+      }
+    } else {
+      this.props.imageHosting.setType(storedType);
     }
   };
 

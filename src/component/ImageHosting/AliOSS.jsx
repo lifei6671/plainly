@@ -2,6 +2,7 @@ import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Input, Form} from "antd";
 import {ALIOSS_IMAGE_HOSTING} from "../../utils/constant";
+import {getDataStore} from "../../data/store";
 
 const formItemLayout = {
   labelCol: {
@@ -15,41 +16,58 @@ const formItemLayout = {
 @inject("imageHosting")
 @observer
 class AliOSS extends Component {
+  dataStore = getDataStore();
+
   constructor(props) {
     super(props);
-    // 从localstorage里面读取
-    const imageHosting = JSON.parse(localStorage.getItem(ALIOSS_IMAGE_HOSTING));
     this.state = {
-      imageHosting,
+      imageHosting: {
+        region: "",
+        accessKeyId: "",
+        accessKeySecret: "",
+        bucket: "",
+      },
     };
   }
+
+  async componentDidMount() {
+    await this.dataStore.init?.();
+    const stored = (await this.dataStore.getConfig(ALIOSS_IMAGE_HOSTING)) || {};
+    this.setState(({imageHosting}) => ({
+      imageHosting: {...imageHosting, ...stored},
+    }));
+  }
+
+  persistConfig = (nextConfig) => {
+    this.dataStore.setConfig(ALIOSS_IMAGE_HOSTING, nextConfig).catch(console.error);
+  };
 
   regionChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.region = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(ALIOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   accessKeyIdChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.accessKeyId = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(ALIOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   accessKeySecretChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.accessKeySecret = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(ALIOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   bucketChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.bucket = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(ALIOSS_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   render() {

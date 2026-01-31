@@ -3,13 +3,14 @@ import {Menu} from "antd";
 
 import {RIGHT_SYMBOL, IMAGE_HOSTING_TYPE} from "../../../utils/constant";
 import "../common.css";
+import {setConfigSync} from "../../../utils/configStore";
 
 const handleImageHostingChange = (imageHosting, type) => {
   if (!imageHosting) {
     return;
   }
   imageHosting.setType(type);
-  window.localStorage.setItem(IMAGE_HOSTING_TYPE, type);
+  setConfigSync(IMAGE_HOSTING_TYPE, type);
 };
 
 const renderImageHostingItems = (imageHosting) => {

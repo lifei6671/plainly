@@ -3,17 +3,15 @@ import {message} from "antd";
 
 import {download, dateFormat} from "../../../utils/helper";
 import "../common.css";
+import {getConfigSync, listConfigKeysSync} from "../../../utils/configStore";
 
 class ExportConfig extends Component {
   handleClick = () => {
     const config = {};
-    for (let i = 0; i < window.localStorage.length; i += 1) {
-      const key = window.localStorage.key(i);
-      if (!key) {
-        continue;
-      }
-      config[key] = window.localStorage.getItem(key);
-    }
+    const keys = listConfigKeysSync();
+    keys.forEach((key) => {
+      config[key] = getConfigSync(key);
+    });
     try {
       const content = JSON.stringify(config, null, 2);
       const filename = `markdown-nice-config-${dateFormat(new Date(), "yyyy-MM-dd")}.json`;

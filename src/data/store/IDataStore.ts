@@ -25,6 +25,14 @@ export interface IDataStore {
   ensureDocumentCharCount(meta: DocumentMeta): Promise<DocumentMeta>;
   getDocumentContent(documentId: number): Promise<string>;
   deleteDocument(documentId: number): Promise<void>;
+  /**
+   * 轻量配置读取：抽象 localStorage / KV / 文件等环境差异
+   * key 为全局唯一字符串，value 建议为可 JSON 序列化对象
+   */
+  getConfig<T = unknown>(key: string, fallback?: T): Promise<T | null>;
+  setConfig<T = unknown>(key: string, value: T): Promise<void>;
+  removeConfig(key: string): Promise<void>;
+  listConfigKeys(prefix?: string): Promise<string[]>;
 }
 
 export type {

@@ -6,6 +6,7 @@ import {solveHtml, solveZhihuMath, copySafari} from "../../utils/converter";
 import {LAYOUT_ID, CODE_NUM, ENTER_DELAY, LEAVE_DELAY} from "../../utils/constant";
 import SvgIcon from "../../icon";
 import "./Zhihu.css";
+import {getConfigSync} from "../../utils/configStore";
 
 @inject("content")
 @inject("navbar")
@@ -19,7 +20,7 @@ class Zhihu extends Component {
   }
 
   copyZhihu = () => {
-    if (window.localStorage.getItem(CODE_NUM) === "0") {
+    if (String(getConfigSync(CODE_NUM, 1)) === "0") {
       message.warning("您当前使用的是微信代码主题，请切换其他代码主题后再试！");
       return;
     }

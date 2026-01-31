@@ -1,6 +1,7 @@
 import React, {Component} from "react";
 import {Input, Form} from "antd";
 import {SM_MS_TOKEN} from "../../utils/constant";
+import {getConfigSync, setConfigSync} from "../../utils/configStore";
 
 const formItemLayout = {
   labelCol: {
@@ -15,14 +16,14 @@ class Smms extends Component {
   constructor(props) {
     super(props);
     this.state = {
-      token: window.localStorage.getItem(SM_MS_TOKEN) || "",
+      token: getConfigSync(SM_MS_TOKEN, "") || "",
     };
   }
 
   tokenChange = (e) => {
     const token = e.target.value;
     this.setState({token});
-    window.localStorage.setItem(SM_MS_TOKEN, token);
+    setConfigSync(SM_MS_TOKEN, token);
   };
 
   render() {

@@ -1,5 +1,6 @@
 import {observable, action} from "mobx";
 import {IMAGE_HOSTING_TYPE, ALIOSS_IMAGE_HOSTING, QINIUOSS_IMAGE_HOSTING, R2_IMAGE_HOSTING} from "../utils/constant";
+import {getConfigSync, setConfigSync} from "../utils/configStore";
 
 class ImageHosting {
   @observable type = "";
@@ -37,19 +38,18 @@ class ImageHosting {
 const store = new ImageHosting();
 
 // 如果为空先把数据放进去
-if (!window.localStorage.getItem(ALIOSS_IMAGE_HOSTING)) {
-  const alioss = JSON.stringify({
+if (!getConfigSync(ALIOSS_IMAGE_HOSTING)) {
+  setConfigSync(ALIOSS_IMAGE_HOSTING, {
     region: "",
     accessKeyId: "",
     accessKeySecret: "",
     bucket: "",
   });
-  window.localStorage.setItem(ALIOSS_IMAGE_HOSTING, alioss);
 }
 
 // 如果为空先把数据放进去
-if (!window.localStorage.getItem(QINIUOSS_IMAGE_HOSTING)) {
-  const qiniuoss = JSON.stringify({
+if (!getConfigSync(QINIUOSS_IMAGE_HOSTING)) {
+  setConfigSync(QINIUOSS_IMAGE_HOSTING, {
     region: "",
     accessKey: "",
     secretKey: "",
@@ -57,12 +57,11 @@ if (!window.localStorage.getItem(QINIUOSS_IMAGE_HOSTING)) {
     domain: "https://",
     namespace: "",
   });
-  window.localStorage.setItem(QINIUOSS_IMAGE_HOSTING, qiniuoss);
 }
 
 // 如果为空先把数据放进去
-if (!window.localStorage.getItem(R2_IMAGE_HOSTING)) {
-  const r2 = JSON.stringify({
+if (!getConfigSync(R2_IMAGE_HOSTING)) {
+  setConfigSync(R2_IMAGE_HOSTING, {
     accountId: "",
     accessKeyId: "",
     secretAccessKey: "",
@@ -73,9 +72,8 @@ if (!window.localStorage.getItem(R2_IMAGE_HOSTING)) {
     quality: 88,
     filenameTemplate: "image_${YYYY}${MM}${DD}_${Timestamp}_${RAND:6}.${EXT}",
   });
-  window.localStorage.setItem(R2_IMAGE_HOSTING, r2);
 }
 
-store.type = window.localStorage.getItem(IMAGE_HOSTING_TYPE);
+store.type = getConfigSync(IMAGE_HOSTING_TYPE, "");
 
 export default store;

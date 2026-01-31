@@ -18,6 +18,7 @@ import {
 } from "../utils/constant";
 import {replaceStyle, addStyleLabel} from "../utils/helper";
 import TEMPLATE from "../template/index";
+import {getConfigSync, setConfigSync} from "../utils/configStore";
 
 class Content {
   @observable content;
@@ -44,19 +45,19 @@ class Content {
   @action
   setContent = (content) => {
     this.content = content;
-    window.localStorage.setItem(CONTENT, content);
+    setConfigSync(CONTENT, content);
   };
 
   @action
   setDocumentId = (documentId) => {
     this.documentId = documentId;
-    window.localStorage.setItem(DOCUMENT_ID, String(documentId));
+    setConfigSync(DOCUMENT_ID, String(documentId));
   };
 
   @action
   setDocumentName = (documentName) => {
     this.documentName = documentName;
-    window.localStorage.setItem(DOCUMENT_NAME, documentName || "");
+    setConfigSync(DOCUMENT_NAME, documentName || "");
   };
 
   @action
@@ -69,21 +70,21 @@ class Content {
       nextValue = Number.isNaN(parsed) ? 0 : parsed;
     }
     this.documentUpdatedAt = nextValue;
-    window.localStorage.setItem(DOCUMENT_UPDATED_AT, String(nextValue));
+    setConfigSync(DOCUMENT_UPDATED_AT, String(nextValue));
   };
 
   @action
   setDocumentCategoryId = (documentCategoryId) => {
     const nextValue = documentCategoryId != null ? Number(documentCategoryId) : DEFAULT_CATEGORY_ID;
     this.documentCategoryId = Number.isNaN(nextValue) ? DEFAULT_CATEGORY_ID : nextValue;
-    window.localStorage.setItem(DOCUMENT_CATEGORY_ID, String(this.documentCategoryId));
+    setConfigSync(DOCUMENT_CATEGORY_ID, String(this.documentCategoryId));
   };
 
   @action
   setDocumentCategoryName = (documentCategoryName) => {
     const nextValue = documentCategoryName || DEFAULT_CATEGORY_NAME;
     this.documentCategoryName = nextValue;
-    window.localStorage.setItem(DOCUMENT_CATEGORY_NAME, nextValue);
+    setConfigSync(DOCUMENT_CATEGORY_NAME, nextValue);
   };
 
   @action
@@ -107,9 +108,9 @@ class Content {
   setCustomStyle = (style = "") => {
     // 如果传入则更新
     if (style) {
-      window.localStorage.setItem(STYLE, style);
+      setConfigSync(STYLE, style);
     }
-    this.style = window.localStorage.getItem(STYLE);
+    this.style = getConfigSync(STYLE, TEMPLATE.style.custom);
     replaceStyle(MARKDOWN_THEME_ID, this.style);
   };
 }
@@ -117,34 +118,34 @@ class Content {
 const store = new Content();
 
 // 如果为空先把数据放进去
-if (window.localStorage.getItem(CONTENT) === null) {
-  window.localStorage.setItem(CONTENT, TEMPLATE.content);
+if (getConfigSync(CONTENT) === null) {
+  setConfigSync(CONTENT, TEMPLATE.content);
 }
-if (window.localStorage.getItem(DOCUMENT_ID) === null) {
-  window.localStorage.setItem(DOCUMENT_ID, "1");
+if (getConfigSync(DOCUMENT_ID) === null) {
+  setConfigSync(DOCUMENT_ID, "1");
 }
-if (window.localStorage.getItem(DOCUMENT_NAME) === null) {
-  window.localStorage.setItem(DOCUMENT_NAME, "未命名.md");
+if (getConfigSync(DOCUMENT_NAME) === null) {
+  setConfigSync(DOCUMENT_NAME, "未命名.md");
 }
-if (window.localStorage.getItem(DOCUMENT_UPDATED_AT) === null) {
-  window.localStorage.setItem(DOCUMENT_UPDATED_AT, "0");
+if (getConfigSync(DOCUMENT_UPDATED_AT) === null) {
+  setConfigSync(DOCUMENT_UPDATED_AT, "0");
 }
-if (window.localStorage.getItem(DOCUMENT_CATEGORY_ID) === null) {
-  window.localStorage.setItem(DOCUMENT_CATEGORY_ID, String(DEFAULT_CATEGORY_ID));
+if (getConfigSync(DOCUMENT_CATEGORY_ID) === null) {
+  setConfigSync(DOCUMENT_CATEGORY_ID, String(DEFAULT_CATEGORY_ID));
 }
-if (window.localStorage.getItem(DOCUMENT_CATEGORY_NAME) === null) {
-  window.localStorage.setItem(DOCUMENT_CATEGORY_NAME, DEFAULT_CATEGORY_NAME);
+if (getConfigSync(DOCUMENT_CATEGORY_NAME) === null) {
+  setConfigSync(DOCUMENT_CATEGORY_NAME, DEFAULT_CATEGORY_NAME);
 }
-if (!window.localStorage.getItem(STYLE)) {
-  window.localStorage.setItem(STYLE, TEMPLATE.style.custom);
+if (!getConfigSync(STYLE)) {
+  setConfigSync(STYLE, TEMPLATE.style.custom);
 }
 
-const templateNum = parseInt(window.localStorage.getItem(TEMPLATE_NUM), 10);
+const templateNum = parseInt(String(getConfigSync(TEMPLATE_NUM, 0)), 10);
 
 // 用于处理刷新后的信息持久化
 // 属于自定义主题则从localstorage中读数据
 if (templateNum === TEMPLATE_CUSTOM_NUM) {
-  store.style = window.localStorage.getItem(STYLE);
+  store.style = getConfigSync(STYLE, TEMPLATE.style.custom);
 } else {
   if (templateNum) {
     const {id} = TEMPLATE_OPTIONS[templateNum];
@@ -161,11 +162,12 @@ addStyleLabel(STYLE_LABELS);
 replaceStyle(BASIC_THEME_ID, TEMPLATE.basic);
 replaceStyle(MARKDOWN_THEME_ID, store.style);
 
-store.content = window.localStorage.getItem(CONTENT);
-store.documentId = parseInt(window.localStorage.getItem(DOCUMENT_ID), 10) || 1;
-store.documentName = window.localStorage.getItem(DOCUMENT_NAME) || "未命名.md";
-store.documentUpdatedAt = parseInt(window.localStorage.getItem(DOCUMENT_UPDATED_AT), 10) || 0;
-store.documentCategoryId = parseInt(window.localStorage.getItem(DOCUMENT_CATEGORY_ID), 10) || DEFAULT_CATEGORY_ID;
-store.documentCategoryName = window.localStorage.getItem(DOCUMENT_CATEGORY_NAME) || DEFAULT_CATEGORY_NAME;
+store.content = getConfigSync(CONTENT, TEMPLATE.content);
+store.documentId = parseInt(String(getConfigSync(DOCUMENT_ID, 1)), 10) || 1;
+store.documentName = getConfigSync(DOCUMENT_NAME, "未命名.md");
+store.documentUpdatedAt = parseInt(String(getConfigSync(DOCUMENT_UPDATED_AT, 0)), 10) || 0;
+store.documentCategoryId =
+  parseInt(String(getConfigSync(DOCUMENT_CATEGORY_ID, DEFAULT_CATEGORY_ID)), 10) || DEFAULT_CATEGORY_ID;
+store.documentCategoryName = getConfigSync(DOCUMENT_CATEGORY_NAME, DEFAULT_CATEGORY_NAME);
 
 export default store;

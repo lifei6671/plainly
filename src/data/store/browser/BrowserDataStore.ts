@@ -1,13 +1,7 @@
 import IndexDB from "../../../component/LocalHistory/indexdb";
 import {countVisibleChars} from "../../../utils/helper";
 import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../../utils/constant";
-import {
-  Category,
-  CategoryWithCount,
-  DocumentMeta,
-  NewDocumentPayload,
-  UpdateDocumentMetaInput,
-} from "../types";
+import {Category, CategoryWithCount, DocumentMeta, NewDocumentPayload, UpdateDocumentMetaInput} from "../types";
 import {IDataStore} from "../IDataStore";
 
 type CategoriesById = Map<number, Category>;
@@ -19,6 +13,16 @@ export class BrowserDataStore implements IDataStore {
 
   // 避免重复初始化的 promise
   private initPromise: Promise<IDBDatabase> | null = null;
+
+  // 配置存储的内存兜底（非浏览器环境或 localStorage 不可用时）
+  private configFallback = new Map<string, string>();
+
+  private getConfigStorage(): Storage | null {
+    if (typeof window !== "undefined" && window.localStorage) {
+      return window.localStorage;
+    }
+    return null;
+  }
 
   async init() {
     await this.getDb();
@@ -132,13 +136,11 @@ export class BrowserDataStore implements IDataStore {
 
   private sortCategories(categories: Category[]): Category[] {
     // 默认目录永远排在最前，其余按创建时间升序
-    return categories
-      .slice()
-      .sort((a, b) => {
-        if (a.id === DEFAULT_CATEGORY_ID) return -1;
-        if (b.id === DEFAULT_CATEGORY_ID) return 1;
-        return this.getTimeValue(a.createdAt) - this.getTimeValue(b.createdAt);
-      });
+    return categories.slice().sort((a, b) => {
+      if (a.id === DEFAULT_CATEGORY_ID) return -1;
+      if (b.id === DEFAULT_CATEGORY_ID) return 1;
+      return this.getTimeValue(a.createdAt) - this.getTimeValue(b.createdAt);
+    });
   }
 
   private normalizeCategory(
@@ -330,8 +332,7 @@ export class BrowserDataStore implements IDataStore {
           }
           const record = (cursor.value || {}) as DocumentMeta;
           const currentCategory = record.category;
-          const shouldMove =
-            currentCategory === id || currentCategory === String(id) || Number(currentCategory) === id;
+          const shouldMove = currentCategory === id || currentCategory === String(id) || Number(currentCategory) === id;
           if (shouldMove) {
             cursor.update({
               ...record,
@@ -713,5 +714,57 @@ export class BrowserDataStore implements IDataStore {
       transaction.oncomplete = () => resolve();
       transaction.onerror = (event) => reject(event);
     });
+  }
+
+  async getConfig<T = unknown>(key: string, fallback?: T): Promise<T | null> {
+    const storage = this.getConfigStorage();
+    const raw = storage ? storage.getItem(key) : this.configFallback.get(key);
+    if (raw == null) {
+      return fallback ?? null;
+    }
+    try {
+      return JSON.parse(raw) as T;
+    } catch (_e) {
+      // 非 JSON 字符串，直接返回
+      return (raw as unknown) as T;
+    }
+  }
+
+  async setConfig<T = unknown>(key: string, value: T): Promise<void> {
+    const payload = typeof value === "string" ? value : JSON.stringify(value);
+    const storage = this.getConfigStorage();
+    if (storage) {
+      storage.setItem(key, payload);
+    } else {
+      this.configFallback.set(key, payload);
+    }
+  }
+
+  async removeConfig(key: string): Promise<void> {
+    const storage = this.getConfigStorage();
+    if (storage) {
+      storage.removeItem(key);
+    }
+    this.configFallback.delete(key);
+  }
+
+  async listConfigKeys(prefix?: string): Promise<string[]> {
+    const storage = this.getConfigStorage();
+    const keys: string[] = [];
+    if (storage) {
+      for (let i = 0; i < storage.length; i += 1) {
+        const k = storage.key(i);
+        if (k && (!prefix || k.startsWith(prefix))) {
+          keys.push(k);
+        }
+      }
+    } else {
+      this.configFallback.forEach((_v, k) => {
+        if (!prefix || k.startsWith(prefix)) {
+          keys.push(k);
+        }
+      });
+    }
+    return keys;
   }
 }

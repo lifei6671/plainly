@@ -1,6 +1,7 @@
 import React, {Component} from "react";
 import {Input, Form, InputNumber, Select} from "antd";
 import {R2_IMAGE_HOSTING} from "../../utils/constant";
+import {getDataStore} from "../../data/store";
 
 const {Option} = Select;
 
@@ -14,6 +15,8 @@ const formItemLayout = {
 };
 
 class R2 extends Component {
+  dataStore = getDataStore();
+
   constructor(props) {
     super(props);
     const defaults = {
@@ -27,61 +30,69 @@ class R2 extends Component {
       quality: 88,
       filenameTemplate: "image_${YYYY}${MM}${DD}_${Timestamp}_${RAND:6}.${EXT}",
     };
-    const stored = JSON.parse(localStorage.getItem(R2_IMAGE_HOSTING)) || {};
-    const imageHosting = {...defaults, ...stored};
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
     this.state = {
-      imageHosting,
+      imageHosting: defaults,
     };
   }
+
+  async componentDidMount() {
+    await this.dataStore.init?.();
+    const stored = (await this.dataStore.getConfig(R2_IMAGE_HOSTING)) || {};
+    const imageHosting = {...this.state.imageHosting, ...stored};
+    this.setState({imageHosting});
+  }
+
+  persistConfig = (nextConfig) => {
+    this.dataStore.setConfig(R2_IMAGE_HOSTING, nextConfig).catch(console.error);
+  };
 
   accountIdChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.accountId = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   accessKeyIdChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.accessKeyId = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   secretAccessKeyChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.secretAccessKey = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   bucketChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.bucket = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   publicBaseUrlChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.publicBaseUrl = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   namespaceChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.namespace = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   sizeChange = (value) => {
     const {imageHosting} = this.state;
     imageHosting.size = value;
     this.setState({imageHosting});
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   qualityChange = (value) => {
@@ -90,14 +101,14 @@ class R2 extends Component {
     const {imageHosting} = this.state;
     imageHosting.quality = quality;
     this.setState({imageHosting});
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   filenameTemplateChange = (e) => {
     const {imageHosting} = this.state;
     imageHosting.filenameTemplate = e.target.value;
     this.setState({imageHosting});
-    localStorage.setItem(R2_IMAGE_HOSTING, JSON.stringify(imageHosting));
+    this.persistConfig(imageHosting);
   };
 
   render() {
