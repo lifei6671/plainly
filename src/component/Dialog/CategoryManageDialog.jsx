@@ -1,6 +1,7 @@
 import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Modal, Table, Button, Input, message} from "antd";
+import {ReloadOutlined} from "@ant-design/icons";
 import {getDataStore} from "../../data/store";
 import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
 
@@ -214,10 +215,11 @@ class CategoryManageDialog extends Component {
           const isDefault = record.id === DEFAULT_CATEGORY_ID;
           return (
             <>
-              <Button type="link" disabled={isDefault} onClick={() => this.openRename(record)}>
+              <Button type="link" disabled={isDefault} onClick={() => this.openRename(record)} title="重命名">
                 重命名
               </Button>
               <Button
+                title="删除"
                 type="link"
                 style={isDefault ? undefined : {color: "#ff4d4f"}}
                 disabled={isDefault}
@@ -241,10 +243,10 @@ class CategoryManageDialog extends Component {
           width={840}
         >
           <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12}}>
-            <Button type="primary" onClick={this.openCreate}>
+            <Button type="primary" onClick={this.openCreate} title="新建目录">
               新建目录
             </Button>
-            <Button icon="reload" onClick={this.loadCategories} />
+            <Button icon={<ReloadOutlined />} onClick={this.loadCategories} title="刷新" />
           </div>
           <Table
             rowKey="id"

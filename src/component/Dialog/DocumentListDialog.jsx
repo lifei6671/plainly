@@ -1,6 +1,7 @@
 import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Modal, Table, Button, Empty, message, Select, Input} from "antd";
+import {SearchOutlined} from "@ant-design/icons";
 import {ensureIndexReady, markIndexDirty, scheduleIndexRebuild, search as searchIndex} from "../../search";
 import {getDataStore} from "../../data/store";
 import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
@@ -94,17 +95,6 @@ class DocumentListDialog extends Component {
       }
     }
     return DEFAULT_CATEGORY_ID;
-  };
-
-  getTimeValue = (value) => {
-    if (value instanceof Date) {
-      return value.getTime();
-    }
-    if (value == null) {
-      return 0;
-    }
-    const parsed = new Date(value).getTime();
-    return Number.isNaN(parsed) ? 0 : parsed;
   };
 
   formatTime = (value) => {
@@ -229,11 +219,6 @@ class DocumentListDialog extends Component {
       }),
       () => this.fetchArticles(true),
     );
-  };
-
-  migrateLegacyArticles = async () => {
-    // Migration is handled inside the BrowserDataStore; keep a noop to preserve call sites.
-    return [];
   };
 
   loadIntoEditor = async (article) => {
@@ -402,7 +387,7 @@ class DocumentListDialog extends Component {
               onPressEnter={this.handleSearch}
               style={{width: 240}}
             />
-            <Button icon="search" onClick={this.handleSearch}>
+            <Button icon={<SearchOutlined />} onClick={this.handleSearch}>
               搜索
             </Button>
           </div>

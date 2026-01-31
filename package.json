@@ -30,6 +30,7 @@
     "postinstall": "node scripts/copy-jieba-wasm.js"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.1.0",
     "@aws-sdk/client-s3": "^3.689.0",
     "@jsquash/webp": "^1.5.0",
     "@sitdown/juejin": "^1.1.3",
