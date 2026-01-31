@@ -32,6 +32,7 @@ export interface UpdateDocumentMetaInput {
   name?: string;
   category?: number;
   updatedAt?: TimestampValue;
+  charCount?: number;
 }
 
-export type DataStoreMode = "browser" | "node" | "cloudflare" | "tauri";
+export type DataStoreMode = "browser" | "remote" | "node" | "cloudflare" | "tauri";

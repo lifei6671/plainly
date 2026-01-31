@@ -1,0 +1,5 @@
+{
+  "port": 8788,
+  "apiPrefix": "/api",
+  "dbFile": "data/plainly.db"
+}

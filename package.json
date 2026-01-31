@@ -17,6 +17,7 @@
     "start": "vite",
     "watch": "node ./watch.js",
     "build": "vite build",
+    "server": "ts-node -P tsconfig.server.json src/server/index.ts",
     "test": "node scripts/test.js",
     "analyze": "source-map-explorer docs/assets/*.js",
     "lint": "eslint src --ext ts,tsx,js,jsx --fix",
@@ -41,11 +42,14 @@
     "ali-oss": "^6.1.1",
     "antd": "^4.24.15",
     "axios": "1.12.0",
+    "body-parser": "^1.20.3",
     "browser-image-compression": "^2.0.2",
     "classnames": "^2.3.2",
     "codemirror": "^5.65.16",
+    "cors": "^2.8.5",
     "diff-match-patch": "^1.0.4",
     "enquire.js": "^2.1.6",
+    "express": "^4.22.1",
     "highlight.js": "^11.9.0",
     "idb": "^8.0.3",
     "jieba-wasm": "^2.4.0",
@@ -74,7 +78,8 @@
     "remark-parse": "^11.0.0",
     "sitdown": "^1.1.1",
     "strip-markdown": "^6.0.0",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "better-sqlite3": "^9.4.5"
   },
   "devDependencies": {
     "@babel/cli": "^7.24.1",
@@ -85,6 +90,7 @@
     "@babel/preset-react": "^7.24.1",
     "@storybook/react": "^4.1.11",
     "@tauri-apps/cli": "^1.6.0",
+    "@types/body-parser": "^1.19.6",
     "@types/node": "^25.1.0",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
@@ -119,6 +125,7 @@
     "react-app-polyfill": "^0.2.1",
     "shelljs": "^0.8.3",
     "source-map-explorer": "^2.0.1",
+    "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vite": "^5.2.0"
   },

@@ -691,9 +691,19 @@ export class BrowserDataStore implements IDataStore {
           const documentId = legacy.id as number;
           const content = (legacy.content as string) || "";
           const charCount =
-            legacy.charCount != null ? (legacy.charCount as number) : countVisibleChars(content as string);
-          const createdAt = (legacy.createdAt as unknown) || (legacy.updatedAt as unknown) || new Date();
-          const updatedAt = (legacy.updatedAt as unknown) || createdAt;
+            legacy.charCount != null && Number.isFinite(Number(legacy.charCount))
+              ? Number(legacy.charCount)
+              : countVisibleChars(content as string);
+          const createdAt =
+            legacy.createdAt != null
+              ? new Date(legacy.createdAt as string | number | Date)
+              : legacy.updatedAt != null
+                ? new Date(legacy.updatedAt as string | number | Date)
+                : new Date();
+          const updatedAt =
+            legacy.updatedAt != null
+              ? new Date(legacy.updatedAt as string | number | Date)
+              : createdAt;
           const meta: DocumentMeta = {
             document_id: documentId,
             name: (legacy.name as string) || "未命名.md",
