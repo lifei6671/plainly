@@ -337,68 +337,80 @@ const dbRun = async (db, sql, params = []) => {
 
 const tableInfo = async (db, table) => dbAll(db, `PRAGMA table_info(${table})`);
 
+// 批量执行 SQL（按分号切分，忽略空语句）
+const runStatements = async (db, sql) => {
+  const raw = String(sql || "");
+  const parts = raw
+    .split(";")
+    .map((stmt) => stmt.trim())
+    .filter(Boolean);
+  for (const statement of parts) {
+    await dbRun(db, statement);
+  }
+};
+
 let schemaReadyPromise = null;
 
 // 初始化 D1 结构与必要字段
 const ensureSchema = async (db) => {
   if (schemaReadyPromise) return schemaReadyPromise;
   schemaReadyPromise = (async () => {
-    await db.exec("PRAGMA foreign_keys = ON;");
-    await db.exec(SQLITE_DDL.users);
-    await db.exec(SQLITE_DDL.sessions);
-    await db.exec(SQLITE_DDL.categories);
-    await db.exec(SQLITE_DDL.documents);
-    await db.exec(SQLITE_DDL.documentContent);
-    await db.exec(SQLITE_DDL.settings);
+    await runStatements(db, "PRAGMA foreign_keys = ON;");
+    await runStatements(db, SQLITE_DDL.users);
+    await runStatements(db, SQLITE_DDL.sessions);
+    await runStatements(db, SQLITE_DDL.categories);
+    await runStatements(db, SQLITE_DDL.documents);
+    await runStatements(db, SQLITE_DDL.documentContent);
+    await runStatements(db, SQLITE_DDL.settings);
 
     const usersInfo = await tableInfo(db, SQLITE_TABLES.users);
     if (!usersInfo.some((c) => c.name === "password_salt")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.users} ADD COLUMN password_salt TEXT;`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.users} ADD COLUMN password_salt TEXT;`);
     }
     if (!usersInfo.some((c) => c.name === "token_version")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.users} ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1;`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.users} ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1;`);
     }
     if (!usersInfo.some((c) => c.name === "password_changed_at")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.users} ADD COLUMN password_changed_at INTEGER;`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.users} ADD COLUMN password_changed_at INTEGER;`);
     }
 
     const categoriesInfo = await tableInfo(db, SQLITE_TABLES.categories);
     if (!categoriesInfo.some((c) => c.name === "category_id")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.categories} ADD COLUMN category_id TEXT;`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.categories} ADD COLUMN category_id TEXT;`);
     }
     if (!categoriesInfo.some((c) => c.name === "source")) {
-      await db.exec(
+      await runStatements(
         `ALTER TABLE ${SQLITE_TABLES.categories} ADD COLUMN source TEXT NOT NULL DEFAULT 'remote';`,
       );
     }
     if (!categoriesInfo.some((c) => c.name === "version")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.categories} ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.categories} ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`);
     }
 
     const documentsInfo = await tableInfo(db, SQLITE_TABLES.documents);
     if (!documentsInfo.some((c) => c.name === "document_id")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN document_id TEXT;`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN document_id TEXT;`);
     }
     if (!documentsInfo.some((c) => c.name === "category_id")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN category_id TEXT;`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN category_id TEXT;`);
     }
     if (!documentsInfo.some((c) => c.name === "source")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN source TEXT NOT NULL DEFAULT 'remote';`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN source TEXT NOT NULL DEFAULT 'remote';`);
     }
     if (!documentsInfo.some((c) => c.name === "version")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`);
     }
     if (!documentsInfo.some((c) => c.name === "content_norm")) {
-      await db.exec(`ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN content_norm TEXT NOT NULL DEFAULT '';`);
+      await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.documents} ADD COLUMN content_norm TEXT NOT NULL DEFAULT '';`);
     }
 
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_documents_user ON ${SQLITE_TABLES.documents}(user_id);`);
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLITE_TABLES.categories}(user_id);`);
-    await db.exec(
+    await runStatements(db, `CREATE INDEX IF NOT EXISTS idx_documents_user ON ${SQLITE_TABLES.documents}(user_id);`);
+    await runStatements(db, `CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLITE_TABLES.categories}(user_id);`);
+    await runStatements(
       `CREATE INDEX IF NOT EXISTS idx_document_content_user ON ${SQLITE_TABLES.documentContent}(user_id);`,
     );
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_settings_user ON ${SQLITE_TABLES.settings}(user_id);`);
-    await db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_user ON ${SQLITE_TABLES.sessions}(user_id);`);
+    await runStatements(db, `CREATE INDEX IF NOT EXISTS idx_settings_user ON ${SQLITE_TABLES.settings}(user_id);`);
+    await runStatements(db, `CREATE INDEX IF NOT EXISTS idx_sessions_user ON ${SQLITE_TABLES.sessions}(user_id);`);
 
     // 回填缺失的 content_norm，确保 LIKE 搜索可用
     const rows = await dbAll(
