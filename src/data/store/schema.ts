@@ -131,17 +131,17 @@ export const SQLiteDDL = {
   `,
   categories: `
     CREATE TABLE IF NOT EXISTS ${SQLiteTables.categories} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
-      id INTEGER NOT NULL,
       category_id TEXT NOT NULL,
       name TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       source TEXT NOT NULL DEFAULT 'remote',
       version INTEGER NOT NULL DEFAULT 1,
-      PRIMARY KEY (user_id, id),
       UNIQUE (user_id, category_id),
       UNIQUE (user_id, name),
+      UNIQUE (id, user_id),
       FOREIGN KEY (user_id) REFERENCES ${SQLiteTables.users}(id) ON DELETE CASCADE
     );
   `,

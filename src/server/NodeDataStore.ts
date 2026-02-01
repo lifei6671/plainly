@@ -3,6 +3,10 @@ import path from "path";
 import crypto from "crypto";
 import MarkdownIt from "markdown-it";
 import {
+  BatchCreateCategoriesResponse,
+  BatchCreateCategoryInput,
+  BatchCreateDocumentInput,
+  BatchCreateDocumentsResponse,
   Category,
   CategoryWithCount,
   DocumentMeta,
@@ -189,29 +193,157 @@ export class NodeDataStore implements IDataStore {
     }
     const hasUserColumn = info.some((c) => c.name === "user_id");
     const pkColumns = info.filter((c) => c.pk > 0).map((c) => c.name);
-    const hasCompositePk = pkColumns.includes("user_id") && pkColumns.includes("id");
-    if (hasUserColumn && hasCompositePk) {
+    const hasIdPrimaryKey = pkColumns.length === 1 && pkColumns[0] === "id";
+    if (hasUserColumn && hasIdPrimaryKey) {
       return;
     }
+    const hasCategoryId = info.some((c) => c.name === "category_id");
+    const hasLegacyUuid = info.some((c) => c.name === "category_uuid");
+    const hasSource = info.some((c) => c.name === "source");
+    const hasVersion = info.some((c) => c.name === "version");
+    const foreignKeysEnabled = this.db.pragma("foreign_keys", {simple: true});
+    this.db.exec("PRAGMA foreign_keys = OFF;");
     const tx = this.db.transaction(() => {
       this.db.exec(SQLiteDDL.categories.replace(SQLiteTables.categories, `${SQLiteTables.categories}_new`));
+      const selectColumns = ["id", "name", "created_at", "updated_at"];
+      if (hasUserColumn) selectColumns.push("user_id");
+      if (hasCategoryId) selectColumns.push("category_id");
+      if (hasLegacyUuid) selectColumns.push("category_uuid");
+      if (hasSource) selectColumns.push("source");
+      if (hasVersion) selectColumns.push("version");
       const rows = this.db
-        .prepare(`SELECT id, name, created_at, updated_at FROM ${SQLiteTables.categories}`)
-        .all() as {id: number; name: string; created_at: number; updated_at: number}[];
+        .prepare(`SELECT ${selectColumns.join(", ")} FROM ${SQLiteTables.categories}`)
+        .all() as Array<{
+        id: number;
+        name: string;
+        created_at: number;
+        updated_at: number;
+        user_id?: number;
+        category_id?: string | null;
+        category_uuid?: string | null;
+        source?: string | null;
+        version?: number | null;
+      }>;
+      const normalizeUserId = (value: unknown): number => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : MIGRATION_USER_ID;
+      };
+      const userRowExists = this.db.prepare(`SELECT id FROM ${SQLiteTables.users} WHERE id = ?`);
+      const accountExists = this.db.prepare(`SELECT id FROM ${SQLiteTables.users} WHERE account = ?`);
+      const insertUser = this.db.prepare(
+        `INSERT INTO ${SQLiteTables.users}
+         (id, account, password, registered_at, last_login_at, last_login_ip, status, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const ensureUserRow = (userId: number) => {
+        if (userRowExists.get(userId)) return;
+        const now = Date.now();
+        const baseAccount = `legacy_${userId}`;
+        let account = baseAccount;
+        let suffix = 0;
+        while (accountExists.get(account)) {
+          suffix += 1;
+          account = `${baseAccount}_${suffix}`;
+        }
+        insertUser.run(userId, account, "", now, now, "0.0.0.0", 1, now);
+      };
       const insert = this.db.prepare(
         `INSERT OR IGNORE INTO ${SQLiteTables.categories}_new
-         (user_id, id, category_id, name, created_at, updated_at, source, version)
-         VALUES (?, ?, ?, ?, ?, ?, 'remote', 1)`,
+         (user_id, category_id, name, created_at, updated_at, source, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       );
+      const idMap = new Map<string, number>();
+      const newIdByCategoryKey = new Map<string, number>();
+      const defaultIdByUser = new Map<number, number>();
+      const seenUsers = new Set<number>();
+      const now = Date.now();
+      const ensureDefault = (userId: number) => {
+        const resolvedUserId = normalizeUserId(userId);
+        ensureUserRow(resolvedUserId);
+        if (defaultIdByUser.has(resolvedUserId)) return;
+        const info = insert.run(
+          resolvedUserId,
+          DEFAULT_CATEGORY_UUID,
+          DEFAULT_CATEGORY_NAME,
+          now,
+          now,
+          "remote",
+          1,
+        );
+        defaultIdByUser.set(resolvedUserId, Number(info.lastInsertRowid));
+      };
       rows.forEach((row) => {
-        const categoryUuid = row.id === DEFAULT_CATEGORY_ID ? DEFAULT_CATEGORY_UUID : generateUuid();
-        insert.run(MIGRATION_USER_ID, row.id, categoryUuid, row.name, row.created_at, row.updated_at);
+        const rawUserId = hasUserColumn ? row.user_id ?? MIGRATION_USER_ID : MIGRATION_USER_ID;
+        const userId = normalizeUserId(rawUserId);
+        ensureUserRow(userId);
+        seenUsers.add(userId);
+        const rawCategoryId = hasCategoryId
+          ? row.category_id
+          : hasLegacyUuid
+            ? row.category_uuid
+            : null;
+        let categoryUuid = normalizeUuid(rawCategoryId || "");
+        if (!categoryUuid) {
+          categoryUuid = row.id === DEFAULT_CATEGORY_ID ? DEFAULT_CATEGORY_UUID : generateUuid();
+        }
+        const createdAt = row.created_at ?? now;
+        const updatedAt = row.updated_at ?? createdAt;
+        const name = row.name || DEFAULT_CATEGORY_NAME;
+        const source = row.source || "remote";
+        const version = row.version ?? 1;
+        const categoryKey = `${userId}:${categoryUuid}`;
+        let newId = newIdByCategoryKey.get(categoryKey);
+        if (!newId) {
+          const info = insert.run(userId, categoryUuid, name, createdAt, updatedAt, source, version);
+          newId = Number(info.lastInsertRowid);
+          newIdByCategoryKey.set(categoryKey, newId);
+        }
+        idMap.set(`${userId}:${row.id}`, newId);
+        if (categoryUuid === DEFAULT_CATEGORY_UUID && !defaultIdByUser.has(userId)) {
+          defaultIdByUser.set(userId, newId);
+        }
       });
+      seenUsers.forEach((userId) => ensureDefault(userId));
+      const docInfo = this.tableInfo(SQLiteTables.documents);
+      if (docInfo.length > 0) {
+        const docHasUser = docInfo.some((c) => c.name === "user_id");
+        const docColumns = ["id", "category"];
+        if (docHasUser) docColumns.push("user_id");
+        const docs = this.db
+          .prepare(`SELECT ${docColumns.join(", ")} FROM ${SQLiteTables.documents}`)
+          .all() as Array<{id: number; category?: number | null; user_id?: number | null}>;
+        const updateSql = docHasUser
+          ? `UPDATE ${SQLiteTables.documents} SET category = ? WHERE user_id = ? AND id = ?`
+          : `UPDATE ${SQLiteTables.documents} SET category = ? WHERE id = ?`;
+        const update = this.db.prepare(updateSql);
+        docs.forEach((doc) => {
+          const rawUserId = docHasUser ? doc.user_id ?? MIGRATION_USER_ID : MIGRATION_USER_ID;
+          const userId = normalizeUserId(rawUserId);
+          ensureUserRow(userId);
+          const oldCategoryId = Number(doc.category ?? DEFAULT_CATEGORY_ID);
+          let nextId = idMap.get(`${userId}:${oldCategoryId}`);
+          if (!nextId) {
+            ensureDefault(userId);
+            nextId = defaultIdByUser.get(userId);
+          }
+          if (nextId && nextId !== oldCategoryId) {
+            if (docHasUser) {
+              update.run(nextId, userId, doc.id);
+            } else {
+              update.run(nextId, doc.id);
+            }
+          }
+        });
+      }
       this.db.exec(`DROP TABLE ${SQLiteTables.categories};`);
       this.db.exec(`ALTER TABLE ${SQLiteTables.categories}_new RENAME TO ${SQLiteTables.categories};`);
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLiteTables.categories}(user_id);`);
     });
-    tx();
+    try {
+      tx();
+    } finally {
+      this.db.exec(`PRAGMA foreign_keys = ${foreignKeysEnabled ? "ON" : "OFF"};`);
+    }
   }
 
   private migrateUsers() {
@@ -247,6 +379,10 @@ export class NodeDataStore implements IDataStore {
           categoryMap.set(row.id, row.category_id);
         }
       });
+      const defaultCategoryRow = this.db
+        .prepare(`SELECT id FROM ${SQLiteTables.categories} WHERE user_id = ? AND category_id = ?`)
+        .get(MIGRATION_USER_ID, DEFAULT_CATEGORY_UUID) as {id?: number} | undefined;
+      const defaultCategoryId = Number(defaultCategoryRow?.id ?? DEFAULT_CATEGORY_ID);
       const rows = this.db
         .prepare(`SELECT id, name, category, created_at, updated_at, char_count FROM ${SQLiteTables.documents}`)
         .all() as {
@@ -263,8 +399,8 @@ export class NodeDataStore implements IDataStore {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'remote', 1)`,
       );
       rows.forEach((row) => {
-        const categoryId = Number(row.category ?? DEFAULT_CATEGORY_ID);
-        const normalizedCategoryId = Number.isFinite(categoryId) ? categoryId : DEFAULT_CATEGORY_ID;
+        const categoryId = Number(row.category ?? defaultCategoryId);
+        const normalizedCategoryId = Number.isFinite(categoryId) ? categoryId : defaultCategoryId;
         const categoryUuid = categoryMap.get(normalizedCategoryId) || DEFAULT_CATEGORY_UUID;
         insert.run(
           row.id,
@@ -548,18 +684,18 @@ export class NodeDataStore implements IDataStore {
     if (!userId || userId <= 0) return;
     const row = this.db
       .prepare(
-        `SELECT id, category_id FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`,
+        `SELECT id, category_id FROM ${SQLiteTables.categories} WHERE user_id = ? AND category_id = ?`,
       )
-      .get(userId, DEFAULT_CATEGORY_ID) as {id: number; category_id?: string | null} | undefined;
+      .get(userId, DEFAULT_CATEGORY_UUID) as {id: number; category_id?: string | null} | undefined;
     const now = Date.now();
     if (!row) {
       this.db
         .prepare(
           `INSERT OR IGNORE INTO ${SQLiteTables.categories}
-           (user_id, id, category_id, name, created_at, updated_at, source, version)
-           VALUES (?, ?, ?, ?, ?, ?, 'remote', 1)`,
+           (user_id, category_id, name, created_at, updated_at, source, version)
+           VALUES (?, ?, ?, ?, ?, 'remote', 1)`,
         )
-        .run(userId, DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, now, now);
+        .run(userId, DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, now, now);
       return;
     }
     const normalized = normalizeUuid(row.category_id || "");
@@ -570,7 +706,7 @@ export class NodeDataStore implements IDataStore {
            SET category_id = ?, updated_at = ?, source = COALESCE(source, 'remote'), version = COALESCE(version, 1)
            WHERE user_id = ? AND id = ?`,
         )
-        .run(DEFAULT_CATEGORY_UUID, now, userId, DEFAULT_CATEGORY_ID);
+        .run(DEFAULT_CATEGORY_UUID, now, userId, row.id);
     }
   }
 
@@ -591,18 +727,18 @@ export class NodeDataStore implements IDataStore {
     if (!this.userId || this.userId <= 0) return;
     const row = this.db
       .prepare(
-        `SELECT id, category_id FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`,
+        `SELECT id, category_id FROM ${SQLiteTables.categories} WHERE user_id = ? AND category_id = ?`,
       )
-      .get(this.userId, DEFAULT_CATEGORY_ID) as {id: number; category_id?: string | null} | undefined;
+      .get(this.userId, DEFAULT_CATEGORY_UUID) as {id: number; category_id?: string | null} | undefined;
     const now = Date.now();
     if (!row) {
       this.db
         .prepare(
           `INSERT OR IGNORE INTO ${SQLiteTables.categories}
-           (user_id, id, category_id, name, created_at, updated_at, source, version)
-           VALUES (?, ?, ?, ?, ?, ?, 'remote', 1)`,
+           (user_id, category_id, name, created_at, updated_at, source, version)
+           VALUES (?, ?, ?, ?, ?, 'remote', 1)`,
         )
-        .run(this.userId, DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, now, now);
+        .run(this.userId, DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, now, now);
       return;
     }
     const normalized = normalizeUuid(row.category_id || "");
@@ -613,15 +749,8 @@ export class NodeDataStore implements IDataStore {
            SET category_id = ?, updated_at = ?, source = COALESCE(source, 'remote'), version = COALESCE(version, 1)
            WHERE user_id = ? AND id = ?`,
         )
-        .run(DEFAULT_CATEGORY_UUID, now, this.userId, DEFAULT_CATEGORY_ID);
+        .run(DEFAULT_CATEGORY_UUID, now, this.userId, row.id);
     }
-  }
-
-  private nextCategoryId(): number {
-    const row = this.db
-      .prepare(`SELECT COALESCE(MAX(id), 0) as maxId FROM ${SQLiteTables.categories} WHERE user_id = ?`)
-      .get(this.userId) as {maxId?: number};
-    return Number(row?.maxId ?? 0) + 1;
   }
 
   private isNumericKey(value: string): boolean {
@@ -865,7 +994,7 @@ export class NodeDataStore implements IDataStore {
       .prepare(
         `SELECT id, category_id, name, created_at, updated_at, source, version, user_id FROM ${SQLiteTables.categories}
          WHERE user_id = ?
-         ORDER BY created_at ASC`,
+         ORDER BY id ASC`,
       )
       .all(this.userId);
     return rows.map((r) => mapSqlCategory(r as SQLiteCategoryRow));
@@ -904,25 +1033,25 @@ export class NodeDataStore implements IDataStore {
       return mapSqlCategory(existingByName);
     }
     const now = Date.now();
-    const id = this.nextCategoryId();
     let categoryUuid = normalizeUuid(options?.category_id ? String(options.category_id).trim() : "");
     if (!categoryUuid) {
       categoryUuid = generateUuid();
     }
     const existingByUuid = this.db
-      .prepare(`SELECT * FROM ${SQLiteTables.categories} WHERE user_id = ? AND category_id = ?`)
+      .prepare(`SELECT * FROM ${SQLiteTables.categories} WHERE user_id = ? AND category_id = ? order by id ASC`)
       .get(this.userId, categoryUuid) as SQLiteCategoryRow | undefined;
     if (existingByUuid) {
       categoryUuid = generateUuid();
     }
     const source = options?.source || "remote";
     const version = options?.version ?? 1;
-    this.db
+    const info = this.db
       .prepare(
-        `INSERT INTO ${SQLiteTables.categories} (user_id, id, category_id, name, created_at, updated_at, source, version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ${SQLiteTables.categories} (user_id, category_id, name, created_at, updated_at, source, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(this.userId, id, categoryUuid, trimmed, now, now, source, version);
+      .run(this.userId, categoryUuid, trimmed, now, now, source, version);
+    const id = Number(info.lastInsertRowid);
     return {
       id,
       category_id: categoryUuid,
@@ -933,6 +1062,46 @@ export class NodeDataStore implements IDataStore {
       version,
       uid: this.userId,
     };
+  }
+
+  async batchCreateCategories(items: BatchCreateCategoryInput[]): Promise<BatchCreateCategoriesResponse> {
+    const results: BatchCreateCategoriesResponse["items"] = [];
+    for (const item of items || []) {
+      if (!item || !item.name) {
+        results.push({client_id: item?.category_id, error: "name required"});
+        continue;
+      }
+      try {
+        const created = await this.createCategory(String(item.name), {
+          category_id: item.category_id,
+          source: item.source,
+          version: item.version,
+        });
+        results.push({client_id: item.category_id, category: created});
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e || "create failed");
+        results.push({client_id: item?.category_id, error: message});
+      }
+    }
+    return {items: results};
+  }
+
+  async batchCreateDocuments(items: BatchCreateDocumentInput[]): Promise<BatchCreateDocumentsResponse> {
+    const results: BatchCreateDocumentsResponse["items"] = [];
+    for (const item of items || []) {
+      if (!item || !item.meta || typeof item.content !== "string") {
+        results.push({client_id: item?.meta?.document_id, error: "invalid payload"});
+        continue;
+      }
+      try {
+        const created = await this.createDocument(item.meta, item.content);
+        results.push({client_id: item.meta.document_id, document: created});
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e || "create failed");
+        results.push({client_id: item?.meta?.document_id, error: message});
+      }
+    }
+    return {items: results};
   }
 
   async renameCategory(categoryUuid: string, name: string): Promise<void> {
@@ -954,10 +1123,12 @@ export class NodeDataStore implements IDataStore {
     const targetUuid = options?.reassignTo || DEFAULT_CATEGORY_UUID;
     const row = this.getCategoryRowByUuid(categoryUuid);
     if (!row) return;
-    if (row.category_id === DEFAULT_CATEGORY_UUID || row.id === DEFAULT_CATEGORY_ID) return;
+    if (row.category_id === DEFAULT_CATEGORY_UUID) return;
     const targetRow = this.getCategoryRowByUuid(targetUuid);
-    const targetId = targetRow ? targetRow.id : DEFAULT_CATEGORY_ID;
-    const targetCategoryUuid = targetRow ? targetRow.category_id : DEFAULT_CATEGORY_UUID;
+    const fallbackRow = this.getCategoryRowByUuid(DEFAULT_CATEGORY_UUID);
+    const resolvedTarget = targetRow || fallbackRow;
+    const targetId = resolvedTarget ? resolvedTarget.id : row.id;
+    const targetCategoryUuid = resolvedTarget ? resolvedTarget.category_id : DEFAULT_CATEGORY_UUID;
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
@@ -981,9 +1152,9 @@ export class NodeDataStore implements IDataStore {
     const charCount = meta.charCount ?? content.length;
     const contentNorm = buildContentNorm(meta.name, content);
     const incomingCategoryUuid = normalizeUuid(meta.category_id ? String(meta.category_id) : "") || DEFAULT_CATEGORY_UUID;
-    const categoryRow =
-      this.getCategoryRowByUuid(incomingCategoryUuid) || this.getCategoryRowByUuid(DEFAULT_CATEGORY_UUID);
-    const categoryId = categoryRow ? categoryRow.id : DEFAULT_CATEGORY_ID;
+    const defaultCategoryRow = this.getCategoryRowByUuid(DEFAULT_CATEGORY_UUID);
+    const categoryRow = this.getCategoryRowByUuid(incomingCategoryUuid) || defaultCategoryRow;
+    const categoryId = categoryRow ? categoryRow.id : defaultCategoryRow?.id ?? 0;
     const categoryUuid = categoryRow ? categoryRow.category_id : DEFAULT_CATEGORY_UUID;
     let documentUuid = normalizeUuid(meta.document_id ? String(meta.document_id).trim() : "");
     if (!documentUuid) {
@@ -1111,8 +1282,10 @@ export class NodeDataStore implements IDataStore {
     }
     if (updates.category_id !== undefined) {
       const normalizedCategory = normalizeUuid(String(updates.category_id));
-      const categoryRow = this.getCategoryRowByUuid(normalizedCategory || String(updates.category_id));
-      const nextCategoryId = categoryRow ? categoryRow.id : DEFAULT_CATEGORY_ID;
+      const categoryRow =
+        this.getCategoryRowByUuid(normalizedCategory || String(updates.category_id)) ||
+        this.getCategoryRowByUuid(DEFAULT_CATEGORY_UUID);
+      const nextCategoryId = categoryRow ? categoryRow.id : current.category;
       const nextCategoryUuid = categoryRow ? categoryRow.category_id : DEFAULT_CATEGORY_UUID;
       fields.push("category = ?");
       values.push(nextCategoryId);

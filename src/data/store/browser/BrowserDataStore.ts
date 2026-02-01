@@ -3,6 +3,10 @@ import {countVisibleChars} from "../../../utils/helper";
 import {DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_ID} from "../../../utils/constant";
 import {ensureIndexReady, search as searchIndex} from "../../../search";
 import {
+  BatchCreateCategoriesResponse,
+  BatchCreateCategoryInput,
+  BatchCreateDocumentInput,
+  BatchCreateDocumentsResponse,
   Category,
   CategoryWithCount,
   DocumentMeta,
@@ -690,6 +694,46 @@ export class BrowserDataStore implements IDataStore {
       };
       transaction.onerror = (event) => reject(event);
     });
+  }
+
+  async batchCreateCategories(items: BatchCreateCategoryInput[]): Promise<BatchCreateCategoriesResponse> {
+    const results: BatchCreateCategoriesResponse["items"] = [];
+    for (const item of items || []) {
+      if (!item || !item.name) {
+        results.push({client_id: item?.category_id, error: "name required"});
+        continue;
+      }
+      try {
+        const created = await this.createCategory(String(item.name), {
+          category_id: item.category_id,
+          source: item.source,
+          version: item.version,
+        });
+        results.push({client_id: item.category_id, category: created});
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e || "create failed");
+        results.push({client_id: item?.category_id, error: message});
+      }
+    }
+    return {items: results};
+  }
+
+  async batchCreateDocuments(items: BatchCreateDocumentInput[]): Promise<BatchCreateDocumentsResponse> {
+    const results: BatchCreateDocumentsResponse["items"] = [];
+    for (const item of items || []) {
+      if (!item || !item.meta || typeof item.content !== "string") {
+        results.push({client_id: item?.meta?.document_id, error: "invalid payload"});
+        continue;
+      }
+      try {
+        const created = await this.createDocument(item.meta, item.content);
+        results.push({client_id: item.meta.document_id, document: created});
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e || "create failed");
+        results.push({client_id: item?.meta?.document_id, error: message});
+      }
+    }
+    return {items: results};
   }
 
   async renameCategory(categoryUuid: string, name: string): Promise<void> {

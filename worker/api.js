@@ -9,6 +9,7 @@ const SESSION_FLAG_COOKIE = "plainly_session";
 const DEFAULT_CATEGORY_ID = 1;
 const DEFAULT_CATEGORY_UUID = "00000000000000000000000000000001";
 const DEFAULT_CATEGORY_NAME = "默认目录";
+const MIGRATION_USER_ID = 1;
 
 // SQLite 表结构由 schema.generated.js 输出，避免重复维护
 
@@ -349,6 +350,160 @@ const runStatements = async (db, sql) => {
   }
 };
 
+const migrateCategoriesPrimaryKey = async (db) => {
+  const info = await tableInfo(db, SQLITE_TABLES.categories);
+  if (!info.length) return;
+  const hasUserColumn = info.some((c) => c.name === "user_id");
+  const pkColumns = info.filter((c) => c.pk > 0).map((c) => c.name);
+  const hasIdPrimaryKey = pkColumns.length === 1 && pkColumns[0] === "id";
+  if (hasUserColumn && hasIdPrimaryKey) {
+    return;
+  }
+  const hasCategoryId = info.some((c) => c.name === "category_id");
+  const hasLegacyUuid = info.some((c) => c.name === "category_uuid");
+  const hasSource = info.some((c) => c.name === "source");
+  const hasVersion = info.some((c) => c.name === "version");
+
+  await runStatements(
+    db,
+    SQLITE_DDL.categories.replace(SQLITE_TABLES.categories, `${SQLITE_TABLES.categories}_new`),
+  );
+
+  const selectColumns = ["id", "name", "created_at", "updated_at"];
+  if (hasUserColumn) selectColumns.push("user_id");
+  if (hasCategoryId) selectColumns.push("category_id");
+  if (hasLegacyUuid) selectColumns.push("category_uuid");
+  if (hasSource) selectColumns.push("source");
+  if (hasVersion) selectColumns.push("version");
+  const rows = await dbAll(
+    db,
+    `SELECT ${selectColumns.join(", ")} FROM ${SQLITE_TABLES.categories}`,
+  );
+
+  const insertCategory = async (
+    userId,
+    categoryUuid,
+    name,
+    createdAt,
+    updatedAt,
+    source,
+    version,
+  ) => {
+    const result = await dbRun(
+      db,
+      `INSERT INTO ${SQLITE_TABLES.categories}_new
+       (user_id, category_id, name, created_at, updated_at, source, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [userId, categoryUuid, name, createdAt, updatedAt, source, version],
+    );
+    return toNumber(result?.meta?.last_row_id, 0);
+  };
+
+  const idMap = new Map();
+  const newIdByCategoryKey = new Map();
+  const defaultIdByUser = new Map();
+  const seenUsers = new Set();
+  const now = Date.now();
+  const ensureDefault = async (userId) => {
+    if (defaultIdByUser.has(userId)) return;
+    const newId = await insertCategory(
+      userId,
+      DEFAULT_CATEGORY_UUID,
+      DEFAULT_CATEGORY_NAME,
+      now,
+      now,
+      "remote",
+      1,
+    );
+    defaultIdByUser.set(userId, newId);
+  };
+
+  for (const row of rows) {
+    const userId = hasUserColumn ? toNumber(row.user_id, MIGRATION_USER_ID) : MIGRATION_USER_ID;
+    seenUsers.add(userId);
+    const rawCategoryId = hasCategoryId
+      ? row.category_id
+      : hasLegacyUuid
+        ? row.category_uuid
+        : null;
+    let categoryUuid = normalizeUuid(rawCategoryId || "");
+    if (!categoryUuid) {
+      categoryUuid = toNumber(row.id, 0) === DEFAULT_CATEGORY_ID ? DEFAULT_CATEGORY_UUID : generateUuid();
+    }
+    const createdAt = toNumber(row.created_at, now) || now;
+    const updatedAt = toNumber(row.updated_at, createdAt) || createdAt;
+    const source = row.source || "remote";
+    const version = row.version ?? 1;
+    const categoryKey = `${userId}:${categoryUuid}`;
+    let newId = newIdByCategoryKey.get(categoryKey);
+    if (!newId) {
+      newId = await insertCategory(
+        userId,
+        categoryUuid,
+        String(row.name || DEFAULT_CATEGORY_NAME),
+        createdAt,
+        updatedAt,
+        source,
+        version,
+      );
+      newIdByCategoryKey.set(categoryKey, newId);
+    }
+    idMap.set(`${userId}:${toNumber(row.id, 0)}`, newId);
+    if (categoryUuid === DEFAULT_CATEGORY_UUID && !defaultIdByUser.has(userId)) {
+      defaultIdByUser.set(userId, newId);
+    }
+  }
+
+  for (const userId of seenUsers) {
+    await ensureDefault(userId);
+  }
+
+  const docInfo = await tableInfo(db, SQLITE_TABLES.documents);
+  if (docInfo.length) {
+    const docHasUser = docInfo.some((c) => c.name === "user_id");
+    const docColumns = ["id", "category"];
+    if (docHasUser) docColumns.push("user_id");
+    const docs = await dbAll(
+      db,
+      `SELECT ${docColumns.join(", ")} FROM ${SQLITE_TABLES.documents}`,
+    );
+    for (const doc of docs) {
+      const userId = docHasUser ? toNumber(doc.user_id, MIGRATION_USER_ID) : MIGRATION_USER_ID;
+      const oldCategoryId = toNumber(doc.category, DEFAULT_CATEGORY_ID);
+      let nextId = idMap.get(`${userId}:${oldCategoryId}`);
+      if (!nextId) {
+        await ensureDefault(userId);
+        nextId = defaultIdByUser.get(userId);
+      }
+      if (nextId && nextId !== oldCategoryId) {
+        if (docHasUser) {
+          await dbRun(
+            db,
+            `UPDATE ${SQLITE_TABLES.documents} SET category = ? WHERE user_id = ? AND id = ?`,
+            [nextId, userId, doc.id],
+          );
+        } else {
+          await dbRun(
+            db,
+            `UPDATE ${SQLITE_TABLES.documents} SET category = ? WHERE id = ?`,
+            [nextId, doc.id],
+          );
+        }
+      }
+    }
+  }
+
+  await dbRun(db, `DROP TABLE ${SQLITE_TABLES.categories}`);
+  await dbRun(
+    db,
+    `ALTER TABLE ${SQLITE_TABLES.categories}_new RENAME TO ${SQLITE_TABLES.categories}`,
+  );
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLITE_TABLES.categories}(user_id)`,
+  );
+};
+
 let schemaReadyPromise = null;
 
 // 初始化 D1 结构与必要字段
@@ -386,6 +541,8 @@ const ensureSchema = async (db) => {
     if (!categoriesInfo.some((c) => c.name === "version")) {
       await runStatements(db, `ALTER TABLE ${SQLITE_TABLES.categories} ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`);
     }
+
+    await migrateCategoriesPrimaryKey(db);
 
     const documentsInfo = await tableInfo(db, SQLITE_TABLES.documents);
     if (!documentsInfo.some((c) => c.name === "document_id")) {
@@ -438,17 +595,17 @@ const ensureDefaultCategoryForUser = async (db, userId) => {
   if (!userId || userId <= 0) return;
   const row = await dbFirst(
     db,
-    `SELECT id, category_id FROM ${SQLITE_TABLES.categories} WHERE user_id = ? AND id = ?`,
-    [userId, DEFAULT_CATEGORY_ID],
+    `SELECT id, category_id FROM ${SQLITE_TABLES.categories} WHERE user_id = ? AND category_id = ?`,
+    [userId, DEFAULT_CATEGORY_UUID],
   );
   if (row) return;
   const now = Date.now();
   await dbRun(
     db,
     `INSERT INTO ${SQLITE_TABLES.categories}
-     (user_id, id, category_id, name, created_at, updated_at, source, version)
-     VALUES (?, ?, ?, ?, ?, ?, 'remote', 1)`,
-    [userId, DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, now, now],
+     (user_id, category_id, name, created_at, updated_at, source, version)
+     VALUES (?, ?, ?, ?, ?, 'remote', 1)`,
+    [userId, DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, now, now],
   );
 };
 
@@ -608,15 +765,6 @@ const getDocumentRowByUuid = async (db, userId, documentUuid) => {
   );
 };
 
-const nextCategoryId = async (db, userId) => {
-  const row = await dbFirst(
-    db,
-    `SELECT COALESCE(MAX(id), 0) as maxId FROM ${SQLITE_TABLES.categories} WHERE user_id = ?`,
-    [userId],
-  );
-  return toNumber(row?.maxId, 0) + 1;
-};
-
 const requireAuth = async (request, env, db) => {
   const token = parseBearer(request) || parseCookies(request.headers.get("Cookie"))[ACCESS_COOKIE] || null;
   if (!token) return null;
@@ -748,7 +896,6 @@ const createCategory = async (db, userId, name, options = {}) => {
     [userId, trimmed],
   );
   if (existingByName) return mapCategory(existingByName);
-  const id = await nextCategoryId(db, userId);
   let categoryUuid = normalizeUuid(options.category_id ? String(options.category_id).trim() : "");
   if (!categoryUuid) categoryUuid = generateUuid();
   const existingByUuid = await dbFirst(
@@ -762,13 +909,14 @@ const createCategory = async (db, userId, name, options = {}) => {
   const now = Date.now();
   const source = options.source || "remote";
   const version = options.version ?? 1;
-  await dbRun(
+  const result = await dbRun(
     db,
     `INSERT INTO ${SQLITE_TABLES.categories}
-     (user_id, id, category_id, name, created_at, updated_at, source, version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [userId, id, categoryUuid, trimmed, now, now, source, version],
+     (user_id, category_id, name, created_at, updated_at, source, version)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [userId, categoryUuid, trimmed, now, now, source, version],
   );
+  const id = toNumber(result?.meta?.last_row_id, 0);
   return {
     id,
     category_id: categoryUuid,
@@ -797,11 +945,13 @@ const renameCategory = async (db, userId, categoryUuid, name) => {
 const deleteCategory = async (db, userId, categoryUuid, options = {}) => {
   const row = await getCategoryRowByUuid(db, userId, categoryUuid);
   if (!row) return;
-  if (row.category_id === DEFAULT_CATEGORY_UUID || toNumber(row.id) === DEFAULT_CATEGORY_ID) return;
+  if (row.category_id === DEFAULT_CATEGORY_UUID) return;
   const targetUuid = options.reassignTo || DEFAULT_CATEGORY_UUID;
   const targetRow = await getCategoryRowByUuid(db, userId, targetUuid);
-  const targetId = targetRow ? targetRow.id : DEFAULT_CATEGORY_ID;
-  const targetCategoryUuid = targetRow ? targetRow.category_id : DEFAULT_CATEGORY_UUID;
+  const fallbackRow = await getCategoryRowByUuid(db, userId, DEFAULT_CATEGORY_UUID);
+  const resolvedTarget = targetRow || fallbackRow;
+  const targetId = resolvedTarget ? resolvedTarget.id : row.id;
+  const targetCategoryUuid = resolvedTarget ? resolvedTarget.category_id : DEFAULT_CATEGORY_UUID;
   await dbRun(
     db,
     `UPDATE ${SQLITE_TABLES.documents}
@@ -823,10 +973,10 @@ const createDocument = async (db, userId, meta, content) => {
   const charCount = meta.charCount ?? content.length;
   const contentNorm = buildContentNorm(meta.name, content);
   const incomingCategoryUuid = normalizeUuid(meta.category_id ? String(meta.category_id) : "") || DEFAULT_CATEGORY_UUID;
+  const defaultCategoryRow = await getCategoryRowByUuid(db, userId, DEFAULT_CATEGORY_UUID);
   const categoryRow =
-    (await getCategoryRowByUuid(db, userId, incomingCategoryUuid)) ||
-    (await getCategoryRowByUuid(db, userId, DEFAULT_CATEGORY_UUID));
-  const categoryId = categoryRow ? categoryRow.id : DEFAULT_CATEGORY_ID;
+    (await getCategoryRowByUuid(db, userId, incomingCategoryUuid)) || defaultCategoryRow;
+  const categoryId = categoryRow ? categoryRow.id : defaultCategoryRow?.id ?? 0;
   const categoryUuid = categoryRow ? categoryRow.category_id : DEFAULT_CATEGORY_UUID;
   let documentUuid = normalizeUuid(meta.document_id ? String(meta.document_id).trim() : "");
   if (!documentUuid) documentUuid = generateUuid();
@@ -932,7 +1082,7 @@ const updateDocumentMeta = async (db, userId, documentUuid, updates) => {
     const categoryRow =
       (await getCategoryRowByUuid(db, userId, normalizedCategory || String(updates.category_id))) ||
       (await getCategoryRowByUuid(db, userId, DEFAULT_CATEGORY_UUID));
-    const nextCategoryId = categoryRow ? categoryRow.id : DEFAULT_CATEGORY_ID;
+    const nextCategoryId = categoryRow ? categoryRow.id : current.category;
     const nextCategoryUuid = categoryRow ? categoryRow.category_id : DEFAULT_CATEGORY_UUID;
     fields.push("category = ?");
     values.push(nextCategoryId);

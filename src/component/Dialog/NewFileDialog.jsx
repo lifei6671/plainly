@@ -2,7 +2,7 @@ import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Modal, Input, Form, Select, message} from "antd";
 import {markIndexDirty, scheduleIndexRebuild} from "../../search";
-import {getDataStore} from "../../data/store";
+import {getDataStore, resolveDataStoreInfo, shouldCacheRemoteStore, REMOTE_SOURCE} from "../../data/store";
 import {BrowserDataStore} from "../../data/store/browser/BrowserDataStore";
 import {DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_UUID} from "../../utils/constant";
 
@@ -18,6 +18,8 @@ class NewFileDialog extends Component {
       name: "",
       categories: [],
       categoryUuid: DEFAULT_CATEGORY_UUID,
+      isLoadingCategories: false,
+      isSaving: false,
     };
   }
 
@@ -43,26 +45,13 @@ class NewFileDialog extends Component {
     return getDataStore(Number(uid) || 0);
   }
 
-  resolveDataStoreMode() {
-    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
-      return import.meta.env.VITE_DATA_STORE;
-    }
-    if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
-      return window.__DATA_STORE_MODE__;
-    }
-    if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
-      return process.env.DATA_STORE_MODE;
-    }
-    return "browser";
-  }
-
   getRuntimeUserId() {
-    if (typeof window === "undefined") return 0;
-    return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
+    const info = resolveDataStoreInfo();
+    return info.userId || 0;
   }
 
   shouldCacheRemote() {
-    return this.resolveDataStoreMode() === "remote" && this.getRuntimeUserId() > 0;
+    return shouldCacheRemoteStore();
   }
 
   getCacheStore() {
@@ -71,6 +60,7 @@ class NewFileDialog extends Component {
   }
 
   loadCategories = async () => {
+    this.setState({isLoadingCategories: true});
     try {
       const categories = await this.getDataStore().listCategories();
       await this.cacheCategories(categories);
@@ -79,6 +69,8 @@ class NewFileDialog extends Component {
     } catch (e) {
       console.error(e);
       return [];
+    } finally {
+      this.setState({isLoadingCategories: false});
     }
   };
 
@@ -111,6 +103,9 @@ class NewFileDialog extends Component {
   };
 
   handleOk = async () => {
+    if (this.state.isSaving) {
+      return;
+    }
     const fileName = this.buildFileName(this.state.name);
     if (!fileName) {
       message.error("请输入文件名称");
@@ -118,6 +113,7 @@ class NewFileDialog extends Component {
     }
 
     try {
+      this.setState({isSaving: true});
       const now = new Date();
       const categoryUuid = this.state.categoryUuid || DEFAULT_CATEGORY_UUID;
       const created = await this.getDataStore().createDocument(
@@ -151,6 +147,8 @@ class NewFileDialog extends Component {
     } catch (e) {
       console.error(e);
       message.error("新建文件失败");
+    } finally {
+      this.setState({isSaving: false});
     }
   };
 
@@ -173,6 +171,7 @@ class NewFileDialog extends Component {
         visible={this.props.dialog.isNewFileOpen}
         onOk={this.handleOk}
         onCancel={this.handleCancel}
+        confirmLoading={this.state.isSaving}
       >
         <Form.Item label="文件名称">
           <Input placeholder="请输入文件名称" value={this.state.name} onChange={this.handleChange} addonAfter=".md" />
@@ -181,7 +180,8 @@ class NewFileDialog extends Component {
           <Select
             value={this.state.categoryUuid}
             onChange={(value) => this.setState({categoryUuid: value})}
-            placeholder="请选择目录"
+            placeholder={this.state.isLoadingCategories ? "加载中..." : "请选择目录"}
+            loading={this.state.isLoadingCategories}
           >
             {this.state.categories.map((category) => (
               <Select.Option key={category.category_id || category.id} value={category.category_id || category.id}>
@@ -202,7 +202,7 @@ class NewFileDialog extends Component {
     await cache.init();
     await cache.upsertDocumentSnapshot({
       ...created,
-      source: "remote",
+      source: REMOTE_SOURCE,
       uid: this.getRuntimeUserId(),
     });
   };
@@ -216,7 +216,7 @@ class NewFileDialog extends Component {
       categories.map((category) =>
         cache.upsertCategorySnapshot({
           ...category,
-          source: "remote",
+          source: REMOTE_SOURCE,
           uid: this.getRuntimeUserId(),
         }),
       ),

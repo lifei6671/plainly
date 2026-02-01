@@ -165,6 +165,7 @@ async function main() {
     if (!account || !password) return fail(res, "account and password required", 400);
     try {
       const user = storeFactory.createUser(String(account).trim(), String(password));
+      await storeFactory.forUser(user.id).listCategories();
       const accessToken = signAccessToken(user);
       const sessionExpires = Date.now() + REFRESH_TOKEN_TTL_MS;
       const sessionId = crypto.randomUUID();

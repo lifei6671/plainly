@@ -56,6 +56,38 @@ export interface UpdateDocumentMetaInput {
   uid?: number;
 }
 
+export interface BatchCreateCategoryInput {
+  name: string;
+  category_id?: string;
+  source?: SourceType;
+  version?: number;
+}
+
+export interface BatchCreateCategoryResult {
+  client_id?: string;
+  category?: Category;
+  error?: string;
+}
+
+export interface BatchCreateCategoriesResponse {
+  items: BatchCreateCategoryResult[];
+}
+
+export interface BatchCreateDocumentInput {
+  meta: NewDocumentPayload;
+  content: string;
+}
+
+export interface BatchCreateDocumentResult {
+  client_id?: string;
+  document?: DocumentMeta;
+  error?: string;
+}
+
+export interface BatchCreateDocumentsResponse {
+  items: BatchCreateDocumentResult[];
+}
+
 export interface User {
   id: number;
   account: string;

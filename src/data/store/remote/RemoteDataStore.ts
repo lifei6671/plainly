@@ -1,5 +1,9 @@
 import {IDataStore} from "../IDataStore";
 import {
+  BatchCreateCategoriesResponse,
+  BatchCreateCategoryInput,
+  BatchCreateDocumentInput,
+  BatchCreateDocumentsResponse,
   Category,
   CategoryWithCount,
   DocumentMeta,
@@ -9,7 +13,7 @@ import {
 } from "../types";
 import {ensureJiebaReady, tokenizeForSearch} from "../../../search/jieba-tokenizer";
 
-type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
 const SESSION_FLAG_COOKIE = "plainly_session";
 
 export class RemoteDataStore implements IDataStore {
@@ -177,15 +181,11 @@ export class RemoteDataStore implements IDataStore {
     return this.request<void>(`/documents/${encodeURIComponent(documentId)}`, "DELETE");
   }
 
-  batchCreateCategories(
-    items: Array<{name: string; category_id?: string; source?: "local" | "remote"; version?: number}>,
-  ): Promise<{items: Array<{client_id?: string; category?: Category; error?: string}>}> {
+  batchCreateCategories(items: BatchCreateCategoryInput[]): Promise<BatchCreateCategoriesResponse> {
     return this.request(`/categories/batch`, "POST", {items});
   }
 
-  batchCreateDocuments(
-    items: Array<{meta: NewDocumentPayload; content: string}>,
-  ): Promise<{items: Array<{client_id?: string; document?: DocumentMeta; error?: string}>}> {
+  batchCreateDocuments(items: BatchCreateDocumentInput[]): Promise<BatchCreateDocumentsResponse> {
     return this.request(`/documents/batch`, "POST", {items});
   }
 

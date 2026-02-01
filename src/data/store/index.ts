@@ -1,12 +1,20 @@
 import {BrowserDataStore} from "./browser/BrowserDataStore";
 import {RemoteDataStore} from "./remote/RemoteDataStore";
 import {DataStoreMode, IDataStore} from "./IDataStore";
+import {SourceType} from "./types";
 
 export const DEFAULT_DATA_STORE_MODE: DataStoreMode = "remote";
+export const REMOTE_SOURCE: SourceType = "remote";
 
 let cachedStore: IDataStore | null = null;
 let cachedMode: DataStoreMode = DEFAULT_DATA_STORE_MODE;
 let cachedUserId: number | null = null;
+
+export type DataStoreRuntimeInfo = {
+  userId: number;
+  configuredMode: DataStoreMode;
+  effectiveMode: DataStoreMode;
+};
 
 const resolveDefaultMode = (): DataStoreMode => {
   // 前端 vite 环境变量
@@ -55,7 +63,10 @@ const resolveDefaultUserId = (): number => {
   return 0;
 };
 
-export function getDataStore(modeOrUserId?: DataStoreMode | number, userId?: number): IDataStore {
+export const resolveDataStoreInfo = (
+  modeOrUserId?: DataStoreMode | number,
+  userId?: number,
+): DataStoreRuntimeInfo => {
   let resolvedUserId = userId;
   let desiredMode: DataStoreMode | undefined;
   if (typeof modeOrUserId === "number") {
@@ -64,11 +75,24 @@ export function getDataStore(modeOrUserId?: DataStoreMode | number, userId?: num
     desiredMode = modeOrUserId as DataStoreMode;
   }
   const finalUserId = resolvedUserId ?? resolveDefaultUserId();
-  const finalMode = desiredMode || resolveDefaultMode();
+  const configuredMode = desiredMode || resolveDefaultMode();
   const shouldForceBrowser =
-    (finalMode === "remote" && (!finalUserId || finalUserId <= 0)) ||
-    (finalMode === "node" && (!finalUserId || finalUserId <= 0));
-  const effectiveMode = shouldForceBrowser ? "browser" : finalMode;
+    (configuredMode === "remote" && (!finalUserId || finalUserId <= 0)) ||
+    (configuredMode === "node" && (!finalUserId || finalUserId <= 0));
+  const effectiveMode = shouldForceBrowser ? "browser" : configuredMode;
+  return {userId: finalUserId, configuredMode, effectiveMode};
+};
+
+export const shouldCacheRemoteStore = (
+  modeOrUserId?: DataStoreMode | number,
+  userId?: number,
+): boolean => {
+  const info = resolveDataStoreInfo(modeOrUserId, userId);
+  return info.effectiveMode === "remote" && info.userId > 0;
+};
+
+export function getDataStore(modeOrUserId?: DataStoreMode | number, userId?: number): IDataStore {
+  const {userId: finalUserId, effectiveMode} = resolveDataStoreInfo(modeOrUserId, userId);
 
   if (!cachedStore || cachedMode !== effectiveMode || cachedUserId !== finalUserId) {
     switch (effectiveMode) {

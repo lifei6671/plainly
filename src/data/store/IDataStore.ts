@@ -1,6 +1,10 @@
 import {
   Category,
   CategoryWithCount,
+  BatchCreateCategoriesResponse,
+  BatchCreateCategoryInput,
+  BatchCreateDocumentInput,
+  BatchCreateDocumentsResponse,
   DataStoreMode,
   DocumentMeta,
   NewDocumentPayload,
@@ -17,9 +21,11 @@ export interface IDataStore {
     name: string,
     options?: {category_id?: string; source?: "local" | "remote"; version?: number},
   ): Promise<Category>;
+  batchCreateCategories(items: BatchCreateCategoryInput[]): Promise<BatchCreateCategoriesResponse>;
   renameCategory(categoryId: string, name: string): Promise<void>;
   deleteCategory(categoryId: string, options?: {reassignTo?: string}): Promise<void>;
   createDocument(meta: NewDocumentPayload, content: string): Promise<DocumentMeta>;
+  batchCreateDocuments(items: BatchCreateDocumentInput[]): Promise<BatchCreateDocumentsResponse>;
   getDocumentMeta(documentId: string): Promise<DocumentMeta | null>;
   getRenameData(documentId: string): Promise<RenameDocumentPayload>;
   updateDocumentMeta(documentId: string, updates: UpdateDocumentMetaInput): Promise<void>;
@@ -49,6 +55,10 @@ export interface IDataStore {
 export type {
   Category,
   CategoryWithCount,
+  BatchCreateCategoriesResponse,
+  BatchCreateCategoryInput,
+  BatchCreateDocumentInput,
+  BatchCreateDocumentsResponse,
   DataStoreMode,
   DocumentMeta,
   NewDocumentPayload,
