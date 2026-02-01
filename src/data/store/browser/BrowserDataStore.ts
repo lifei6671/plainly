@@ -511,9 +511,9 @@ export class BrowserDataStore implements IDataStore {
     // 默认目录永远排在最前，其余按创建时间升序
     return categories.slice().sort((a, b) => {
       const aIsDefault =
-        (a as any).category_id === DEFAULT_CATEGORY_UUID || a.id === DEFAULT_CATEGORY_ID || a.id === DEFAULT_CATEGORY_UUID;
+        (a as any).category_id === DEFAULT_CATEGORY_UUID || a.id === DEFAULT_CATEGORY_ID;
       const bIsDefault =
-        (b as any).category_id === DEFAULT_CATEGORY_UUID || b.id === DEFAULT_CATEGORY_ID || b.id === DEFAULT_CATEGORY_UUID;
+        (b as any).category_id === DEFAULT_CATEGORY_UUID || b.id === DEFAULT_CATEGORY_ID;
       if (aIsDefault) return -1;
       if (bIsDefault) return 1;
       return this.getTimeValue(a.createdAt) - this.getTimeValue(b.createdAt);
@@ -655,7 +655,7 @@ export class BrowserDataStore implements IDataStore {
       const categoryUuid = this.normalizeUuid(options?.category_id) || this.generateUuid();
       const source = options?.source || this.defaultSource;
       const version = options?.version ?? 1;
-      const payload: Category = {
+      const payload: Omit<Category, "id"> & {id?: number} = {
         name,
         category_id: categoryUuid,
         createdAt: now,
