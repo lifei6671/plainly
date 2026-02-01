@@ -7,9 +7,22 @@ workers_dev = true
 account_id = "f6a80eb748def94c3e800c9a6456e16b"
 
 [[routes]]
-pattern = "mdnice.disign.me"
+pattern = "mdnice.disign.me/*"
 zone_name = "disign.me" 
 
 [assets]
 directory = "./docs"
 binding = "ASSETS"
+
+# ✅ D1 绑定（新增）
+[[d1_databases]]
+binding = "DB"                 # 代码里用 env.DB
+database_name = "plainly" # 你的 D1 数据库名
+database_id = "9ea724c5-d3a5-472c-a375-aa628690ae30"  # 你的 D1 数据库 ID
+
+[vars]
+# API 前缀与令牌配置（生产环境建议使用 wrangler secret 设置 JWT_SECRET）
+API_PREFIX = "/api"
+JWT_SECRET = "PTgWnXzydiFck7satLHK"
+ACCESS_TOKEN_TTL_MS = "600000"
+REFRESH_TOKEN_TTL_MS = "1209600000"

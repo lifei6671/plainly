@@ -46,6 +46,7 @@ export interface SQLiteDocumentRow {
   category_id: string;
   created_at: number;
   updated_at: number;
+  content_norm?: string | null;
   char_count?: number | null;
   source?: SourceType | string | null;
   version?: number | null;
@@ -154,6 +155,7 @@ export const SQLiteDDL = {
       category_id TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
+      content_norm TEXT NOT NULL DEFAULT '',
       char_count INTEGER,
       source TEXT NOT NULL DEFAULT 'remote',
       version INTEGER NOT NULL DEFAULT 1,

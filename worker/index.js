@@ -1,5 +1,11 @@
+import {handleApiRequest} from "./api";
+
 export default {
   async fetch(request, env) {
+    // 优先处理 API 请求，避免静态资源吞掉接口
+    const apiResponse = await handleApiRequest(request, env);
+    if (apiResponse) return apiResponse;
+
     let response = await env.ASSETS.fetch(request);
 
     if (response.status === 404) {

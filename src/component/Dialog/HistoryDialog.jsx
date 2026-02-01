@@ -51,7 +51,7 @@ class HistoryDialog extends Component {
     if (resolveDataStoreMode() !== "remote") return null;
     const uid = getRuntimeUserId();
     if (!uid) return null;
-    return getDataStore("remote", Number(uid) || 0);
+    return getDataStore(Number(uid) || 0);
   };
 
   getHistorySource = () => {

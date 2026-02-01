@@ -87,7 +87,7 @@ class CategoryManageDialog extends Component {
     try {
       const uid =
         (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
-      const store = getDataStore("remote", Number(uid) || 0);
+      const store = getDataStore(Number(uid) || 0);
       const categories = await store.listCategoriesWithCount();
       await this.cacheCategories(categories);
       this.setState({categories});
@@ -143,7 +143,7 @@ class CategoryManageDialog extends Component {
     try {
       const uid =
         (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
-      const store = getDataStore("remote", Number(uid) || 0);
+      const store = getDataStore(Number(uid) || 0);
       const created = await store.createCategory(nextName);
       await this.cacheCategories([created]);
       message.success("新建目录成功");
@@ -176,7 +176,7 @@ class CategoryManageDialog extends Component {
     try {
       const uid =
         (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
-      const store = getDataStore("remote", Number(uid) || 0);
+      const store = getDataStore(Number(uid) || 0);
       await store.renameCategory(renameUuid, nextName);
       message.success("重命名成功");
       if (this.props.content.documentCategoryUuid === renameUuid) {
@@ -214,7 +214,7 @@ class CategoryManageDialog extends Component {
     try {
       const uid =
         (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
-      const store = getDataStore("remote", Number(uid) || 0);
+      const store = getDataStore(Number(uid) || 0);
       await store.deleteCategory(category.category_id, {reassignTo: DEFAULT_CATEGORY_UUID});
       if (this.props.content.documentCategoryUuid === category.category_id) {
         this.props.content.setDocumentCategory(DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME);

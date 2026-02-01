@@ -102,7 +102,7 @@ class App extends Component {
     try {
       const localStore = new BrowserDataStore(0);
       await localStore.init();
-      const remoteStore = getDataStore("remote", Number(user.id) || 0);
+      const remoteStore = getDataStore(Number(user.id) || 0);
       const localCategories = await localStore.listCategories();
       const categoryUuidMap = new Map();
       const categoryItems = localCategories

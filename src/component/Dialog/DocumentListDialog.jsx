@@ -2,7 +2,7 @@ import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Modal, Table, Button, Empty, message, Select, Input} from "antd";
 import {SearchOutlined} from "@ant-design/icons";
-import {ensureIndexReady, markIndexDirty, scheduleIndexRebuild, search as searchIndex} from "../../search";
+import {markIndexDirty, scheduleIndexRebuild} from "../../search";
 import {getDataStore} from "../../data/store";
 import {BrowserDataStore} from "../../data/store/browser/BrowserDataStore";
 import {DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_UUID} from "../../utils/constant";
@@ -46,7 +46,7 @@ class DocumentListDialog extends Component {
   getDataStore() {
     const uid =
       (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
-    return getDataStore("remote", Number(uid) || 0);
+    return getDataStore(Number(uid) || 0);
   }
 
   resolveDataStoreMode() {
@@ -100,49 +100,6 @@ class DocumentListDialog extends Component {
     }
   };
 
-  buildCategoryLookup = (categories) => {
-    const byUuid = new Map();
-    const byName = new Map();
-    const byLegacyId = new Map();
-    categories.forEach((category) => {
-      if (category.category_id) {
-        byUuid.set(category.category_id, category);
-      }
-      if (typeof category.id === "number") {
-        byLegacyId.set(category.id, category.category_id);
-      }
-      if (category.name) {
-        byName.set(category.name, category.category_id);
-      }
-    });
-    return {byUuid, byName, byLegacyId};
-  };
-
-  normalizeCategoryId = (value, categories) => {
-    const {byUuid, byName, byLegacyId} = this.buildCategoryLookup(categories);
-    if (typeof value === "string" && value.trim()) {
-      const trimmed = value.trim();
-      const normalized = trimmed.replace(/-/g, "");
-      if (byUuid.has(normalized)) {
-        return normalized;
-      }
-      if (byUuid.has(trimmed)) {
-        return trimmed;
-      }
-      if (byName.has(trimmed)) {
-        return byName.get(trimmed);
-      }
-      const parsed = Number(trimmed);
-      if (!Number.isNaN(parsed) && byLegacyId.has(parsed)) {
-        return byLegacyId.get(parsed);
-      }
-    }
-    if (typeof value === "number") {
-      return byLegacyId.has(value) ? byLegacyId.get(value) : DEFAULT_CATEGORY_UUID;
-    }
-    return DEFAULT_CATEGORY_UUID;
-  };
-
   formatTime = (value) => {
     if (!value) {
       return "-";
@@ -185,9 +142,16 @@ class DocumentListDialog extends Component {
       let items = [];
       let hasMore = false;
       if (useFilters) {
-        const filtered = await this.loadFilteredArticles();
-        items = filtered.slice(offset, offset + this.pageSize);
-        hasMore = filtered.length > offset + this.pageSize;
+        const query = String(this.state.searchQuery || "").trim();
+        const categoryId =
+          this.state.selectedCategoryUuid !== ALL_CATEGORY_ID ? this.state.selectedCategoryUuid : undefined;
+        const result = await this.getDataStore().searchDocuments(query, {
+          categoryId,
+          offset,
+          limit: this.pageSize,
+        });
+        items = result.items || [];
+        hasMore = Boolean(result.hasMore);
       } else {
         const pageResult = await this.getDataStore().listDocumentsPage(offset, this.pageSize);
         items = pageResult.items;
@@ -211,38 +175,6 @@ class DocumentListDialog extends Component {
     }
   };
 
-  loadFilteredArticles = async () => {
-    const categories = await this.loadCategories();
-    const items = await this.getDataStore().listAllDocuments();
-    const normalizedItems = items.map((item) => ({
-      ...item,
-      category_id: this.normalizeCategoryId(item.category_id || item.category, categories),
-    }));
-    let filtered = normalizedItems;
-    if (this.state.selectedCategoryUuid !== ALL_CATEGORY_ID) {
-      filtered = filtered.filter((item) => item.category_id === this.state.selectedCategoryUuid);
-    }
-    const query = String(this.state.searchQuery || "").trim();
-    if (!query) {
-      return filtered;
-    }
-    const itemsById = new Map();
-    filtered.forEach((item) => {
-      itemsById.set(String(item.document_id), item);
-    });
-    let idx = null;
-    try {
-      idx = await ensureIndexReady();
-    } catch (e) {
-      console.error(e);
-      return [];
-    }
-    if (!idx) return [];
-    const results = searchIndex(idx, query);
-    console.log("idx terms count:", Object.keys(idx.invertedIndex).length);
-    console.log("Search results:", results);
-    return results.map((result) => itemsById.get(result.ref)).filter(Boolean);
-  };
 
   handleLoadMore = () => {
     this.loadMoreArticles();

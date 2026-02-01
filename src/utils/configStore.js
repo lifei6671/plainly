@@ -1,23 +1,6 @@
 import {getDataStore} from "../data/store";
 
-const resolveMode = () => {
-  // 优先前端环境变量
-  if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_DATA_STORE) {
-    return import.meta.env.VITE_DATA_STORE;
-  }
-  // 其次使用全局注入（例如 window.__DATA_STORE_MODE__）
-  if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
-    return window.__DATA_STORE_MODE__;
-  }
-  // 服务器环境可以用 process.env
-  if (typeof process !== "undefined" && process.env && process.env.DATA_STORE_MODE) {
-    return process.env.DATA_STORE_MODE;
-  }
-  return "browser";
-};
-
-const runtimeMode = resolveMode();
-const runtimeStore = getDataStore(runtimeMode);
+const runtimeStore = getDataStore();
 
 const memoryStore = new Map();
 

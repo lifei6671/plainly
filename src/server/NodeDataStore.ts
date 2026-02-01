@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import path from "path";
 import crypto from "crypto";
+import MarkdownIt from "markdown-it";
 import {
   Category,
   CategoryWithCount,
@@ -29,6 +30,52 @@ type TimestampValue = Date | string | number;
 type ColumnInfo = {name: string; pk: number; notnull: number; dflt_value: unknown};
 
 const MIGRATION_USER_ID = 1;
+
+// 仅用于提取可见文本的 Markdown 解析器（不渲染 HTML）
+const markdownParserRaw = new MarkdownIt({
+  html: false,
+  linkify: true,
+  typographer: false,
+});
+
+// 从 Markdown 中提取可见文本，且排除代码块/行内代码
+const extractVisibleTextNoCode = (markdown: string): string => {
+  const tokens = markdownParserRaw.parse(markdown ?? "", {});
+  const parts: string[] = [];
+  const walk = (toks: any[]) => {
+    for (const t of toks) {
+      if (t.type === "text" && t.content) {
+        parts.push(t.content);
+        continue;
+      }
+      if (t.type === "image" && t.content) {
+        parts.push(t.content);
+        continue;
+      }
+      if (t.type === "code_inline" || t.type === "code_block" || t.type === "fence") {
+        continue;
+      }
+      if (t.children && t.children.length) {
+        walk(t.children);
+      }
+    }
+  };
+  walk(tokens);
+  return parts
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+// 构建用于 LIKE 搜索的规范化文本：合并标题与正文并统一处理
+const buildContentNorm = (title: string, markdown: string): string => {
+  const combined = `${title || ""}\n${markdown || ""}`;
+  const text = extractVisibleTextNoCode(combined);
+  return text.toLowerCase();
+};
+
+// LIKE 查询时需要转义的特殊字符
+const escapeLikeValue = (value: string): string => value.replace(/[\\%_]/g, "\\$&");
 
 const toMillis = (v: TimestampValue | null | undefined): number => {
   if (v instanceof Date) return v.getTime();
@@ -120,6 +167,7 @@ export class NodeDataStore implements IDataStore {
     return this.db.prepare(`PRAGMA table_info(${table})`).all() as ColumnInfo[];
   }
 
+  // 确保迁移用户存在（用于旧数据迁移与默认数据初始化）
   private ensureDefaultUser() {
     const row = this.db.prepare(`SELECT id FROM ${SQLiteTables.users} WHERE id = ?`).get(MIGRATION_USER_ID);
     if (!row) {
@@ -353,6 +401,40 @@ export class NodeDataStore implements IDataStore {
     );
   }
 
+  // 为文档表补齐 content_norm 字段并回填历史数据
+  private migrateContentNorm() {
+    let info = this.tableInfo(SQLiteTables.documents);
+    if (info.length === 0) return;
+    const hasContentNorm = info.some((c) => c.name === "content_norm");
+    if (!hasContentNorm) {
+      this.db.exec(`ALTER TABLE ${SQLiteTables.documents} ADD COLUMN content_norm TEXT NOT NULL DEFAULT '';`);
+    }
+    info = this.tableInfo(SQLiteTables.documents);
+    if (!info.some((c) => c.name === "content_norm")) {
+      return;
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT d.id, d.user_id, d.name, d.content_norm, c.content
+         FROM ${SQLiteTables.documents} d
+         LEFT JOIN ${SQLiteTables.documentContent} c
+           ON c.document_row_id = d.id AND c.user_id = d.user_id
+         WHERE d.content_norm IS NULL OR d.content_norm = ''`,
+      )
+      .all() as {id: number; user_id: number; name?: string | null; content?: string | null}[];
+    if (!rows.length) return;
+    const update = this.db.prepare(
+      `UPDATE ${SQLiteTables.documents} SET content_norm = ? WHERE user_id = ? AND id = ?`,
+    );
+    const tx = this.db.transaction((items: typeof rows) => {
+      items.forEach((row) => {
+        const nextNorm = buildContentNorm(row.name || "", row.content || "");
+        update.run(nextNorm, row.user_id, row.id);
+      });
+    });
+    tx(rows);
+  }
+
   private migrateDocumentContent() {
     let info = this.tableInfo(SQLiteTables.documentContent);
     if (info.length === 0) {
@@ -388,6 +470,7 @@ export class NodeDataStore implements IDataStore {
     tx();
   }
 
+  // 迁移设置表，去重后再落表，避免 UNIQUE 冲突
   private migrateSettings() {
     const info = this.tableInfo(SQLiteTables.settings);
     if (info.length === 0) {
@@ -403,7 +486,14 @@ export class NodeDataStore implements IDataStore {
       this.db.exec(SQLiteDDL.settings.replace(SQLiteTables.settings, `${SQLiteTables.settings}_new`));
       this.db.exec(`
         INSERT INTO ${SQLiteTables.settings}_new (user_id, key, value)
-        SELECT ${MIGRATION_USER_ID} as user_id, key, value FROM ${SQLiteTables.settings};
+        SELECT ${MIGRATION_USER_ID} as user_id, s.key, s.value
+        FROM ${SQLiteTables.settings} s
+        JOIN (
+          SELECT key, MAX(rowid) as max_rowid
+          FROM ${SQLiteTables.settings}
+          GROUP BY key
+        ) m
+          ON s.key = m.key AND s.rowid = m.max_rowid;
       `);
       this.db.exec(`DROP TABLE ${SQLiteTables.settings};`);
       this.db.exec(`ALTER TABLE ${SQLiteTables.settings}_new RENAME TO ${SQLiteTables.settings};`);
@@ -412,6 +502,7 @@ export class NodeDataStore implements IDataStore {
     tx();
   }
 
+  // 初始化数据库结构并完成必要迁移
   private bootstrap() {
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");
@@ -424,6 +515,7 @@ export class NodeDataStore implements IDataStore {
     this.migrateSettings();
     this.migrateCategoryIds();
     this.migrateDocumentIds();
+    this.migrateContentNorm();
     this.db.exec(
       [
         SQLiteDDL.users,
@@ -434,6 +526,8 @@ export class NodeDataStore implements IDataStore {
         SQLiteDDL.settings,
       ].join("\n"),
     );
+    // 初始化默认目录数据（category_id 固定值）
+    this.ensureDefaultCategoryForUser(MIGRATION_USER_ID);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_documents_user ON ${SQLiteTables.documents}(user_id);`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLiteTables.categories}(user_id);`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_document_content_user ON ${SQLiteTables.documentContent}(user_id);`);
@@ -446,6 +540,37 @@ export class NodeDataStore implements IDataStore {
       (this.db.prepare(`SELECT * FROM ${SQLiteTables.users} WHERE id = ?`).get(userId) as SQLiteUserRow | undefined) ||
       null
     );
+  }
+
+  // 初始化默认目录，确保 category_id 固定为 DEFAULT_CATEGORY_UUID
+  private ensureDefaultCategoryForUser(userId: number) {
+    if (!userId || userId <= 0) return;
+    const row = this.db
+      .prepare(
+        `SELECT id, category_id FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`,
+      )
+      .get(userId, DEFAULT_CATEGORY_ID) as {id: number; category_id?: string | null} | undefined;
+    const now = Date.now();
+    if (!row) {
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO ${SQLiteTables.categories}
+           (user_id, id, category_id, name, created_at, updated_at, source, version)
+           VALUES (?, ?, ?, ?, ?, ?, 'remote', 1)`,
+        )
+        .run(userId, DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, now, now);
+      return;
+    }
+    const normalized = normalizeUuid(row.category_id || "");
+    if (!normalized || normalized !== row.category_id) {
+      this.db
+        .prepare(
+          `UPDATE ${SQLiteTables.categories}
+           SET category_id = ?, updated_at = ?, source = COALESCE(source, 'remote'), version = COALESCE(version, 1)
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(DEFAULT_CATEGORY_UUID, now, userId, DEFAULT_CATEGORY_ID);
+    }
   }
 
   private ensureUserExists() {
@@ -853,6 +978,7 @@ export class NodeDataStore implements IDataStore {
     const createdAt = toMillis(meta.createdAt ?? Date.now());
     const updatedAt = toMillis(meta.updatedAt ?? createdAt);
     const charCount = meta.charCount ?? content.length;
+    const contentNorm = buildContentNorm(meta.name, content);
     const incomingCategoryUuid = normalizeUuid(meta.category_id ? String(meta.category_id) : "") || DEFAULT_CATEGORY_UUID;
     const categoryRow =
       this.getCategoryRowByUuid(incomingCategoryUuid) || this.getCategoryRowByUuid(DEFAULT_CATEGORY_UUID);
@@ -874,7 +1000,7 @@ export class NodeDataStore implements IDataStore {
           this.db
             .prepare(
               `UPDATE ${SQLiteTables.documents}
-               SET name = ?, category = ?, category_id = ?, updated_at = ?, char_count = ?, source = ?, version = ?
+               SET name = ?, category = ?, category_id = ?, updated_at = ?, content_norm = ?, char_count = ?, source = ?, version = ?
                WHERE user_id = ? AND id = ?`,
             )
             .run(
@@ -882,6 +1008,7 @@ export class NodeDataStore implements IDataStore {
               categoryId,
               categoryUuid,
               updatedAt,
+              contentNorm,
               charCount,
               source,
               version,
@@ -904,10 +1031,22 @@ export class NodeDataStore implements IDataStore {
       const info = this.db
         .prepare(
           `INSERT INTO ${SQLiteTables.documents}
-           (user_id, document_id, name, category, category_id, created_at, updated_at, char_count, source, version)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (user_id, document_id, name, category, category_id, created_at, updated_at, content_norm, char_count, source, version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(this.userId, documentUuid, meta.name, categoryId, categoryUuid, createdAt, updatedAt, charCount, source, version);
+        .run(
+          this.userId,
+          documentUuid,
+          meta.name,
+          categoryId,
+          categoryUuid,
+          createdAt,
+          updatedAt,
+          contentNorm,
+          charCount,
+          source,
+          version,
+        );
       const id = Number(info.lastInsertRowid);
       this.db
         .prepare(
@@ -952,6 +1091,14 @@ export class NodeDataStore implements IDataStore {
     if (updates.name !== undefined) {
       fields.push("name = ?");
       values.push(updates.name);
+      const contentRow = this.db
+        .prepare(
+          `SELECT content FROM ${SQLiteTables.documentContent} WHERE document_row_id = ? AND user_id = ?`,
+        )
+        .get(current.id, this.userId) as {content?: string} | undefined;
+      const nextContentNorm = buildContentNorm(String(updates.name ?? current.name), contentRow?.content ?? "");
+      fields.push("content_norm = ?");
+      values.push(nextContentNorm);
     }
     if (updates.category_id !== undefined) {
       const normalizedCategory = normalizeUuid(String(updates.category_id));
@@ -1013,6 +1160,60 @@ export class NodeDataStore implements IDataStore {
     return rows.map((r) => mapSqlDocToMeta(r as SQLiteDocumentRow));
   }
 
+  async searchDocuments(
+    query: string,
+    options?: {categoryId?: string; offset?: number; limit?: number},
+  ): Promise<{items: DocumentMeta[]; hasMore: boolean}> {
+    const trimmed = String(query || "").trim();
+    if (!trimmed) {
+      return this.searchDocumentsByTokens([], options);
+    }
+    const tokens = trimmed.split(/\s+/g);
+    return this.searchDocumentsByTokens(tokens, options);
+  }
+
+  async searchDocumentsByTokens(
+    tokens: string[],
+    options?: {categoryId?: string; offset?: number; limit?: number},
+  ): Promise<{items: DocumentMeta[]; hasMore: boolean}> {
+    this.ensureUserExists();
+    const normalizedTokens = Array.from(
+      new Set(
+        (tokens || [])
+          .map((t) => String(t || "").trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    );
+    const limit = Math.max(1, Number(options?.limit ?? 20));
+    const offset = Math.max(0, Number(options?.offset ?? 0));
+    const whereParts: string[] = ["user_id = ?"];
+    const params: any[] = [this.userId];
+    if (options?.categoryId) {
+      const normalizedCategory = normalizeUuid(String(options.categoryId));
+      whereParts.push("category_id = ?");
+      params.push(normalizedCategory || String(options.categoryId));
+    }
+    normalizedTokens.forEach((token) => {
+      whereParts.push(`content_norm LIKE ? ESCAPE '\\'`);
+      params.push(`%${escapeLikeValue(token)}%`);
+    });
+    const whereClause = whereParts.join(" AND ");
+    const items = this.db
+      .prepare(
+        `SELECT * FROM ${SQLiteTables.documents}
+         WHERE ${whereClause}
+         ORDER BY updated_at DESC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(...params, limit, offset)
+      .map((r) => mapSqlDocToMeta(r as SQLiteDocumentRow));
+    const totalRow = this.db
+      .prepare(`SELECT COUNT(*) as c FROM ${SQLiteTables.documents} WHERE ${whereClause}`)
+      .get(...params) as {c: number};
+    const hasMore = Number(totalRow?.c ?? 0) > offset + items.length;
+    return {items, hasMore};
+  }
+
   async ensureDocumentCharCount(meta: DocumentMeta): Promise<DocumentMeta> {
     if (meta.charCount != null) return meta;
     const content = await this.getDocumentContent(meta.document_id);
@@ -1038,6 +1239,7 @@ export class NodeDataStore implements IDataStore {
     if (!current) return;
     const nextUpdatedAt = toMillis(updatedAt ?? Date.now());
     const charCount = content.length;
+    const contentNorm = buildContentNorm(current.name, content);
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
@@ -1049,10 +1251,10 @@ export class NodeDataStore implements IDataStore {
       this.db
         .prepare(
           `UPDATE ${SQLiteTables.documents}
-           SET updated_at = ?, char_count = ?, version = COALESCE(version, 1) + 1
+           SET updated_at = ?, content_norm = ?, char_count = ?, version = COALESCE(version, 1) + 1
            WHERE id = ? AND user_id = ?`,
         )
-        .run(nextUpdatedAt, charCount, current.id, this.userId);
+        .run(nextUpdatedAt, contentNorm, charCount, current.id, this.userId);
     });
     tx();
   }

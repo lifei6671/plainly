@@ -1,5 +1,6 @@
 import {IDataStore} from "../IDataStore";
 import {Category, CategoryWithCount, DocumentMeta, NewDocumentPayload, UpdateDocumentMetaInput} from "../types";
+import {ensureJiebaReady, tokenizeForSearch} from "../../../search/jieba-tokenizer";
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 const SESSION_FLAG_COOKIE = "plainly_session";
@@ -119,6 +120,34 @@ export class RemoteDataStore implements IDataStore {
 
   listAllDocuments(): Promise<DocumentMeta[]> {
     return this.request<DocumentMeta[]>("/documents/all");
+  }
+
+  async searchDocuments(
+    query: string,
+    options?: {categoryId?: string; offset?: number; limit?: number},
+  ): Promise<{items: DocumentMeta[]; hasMore: boolean}> {
+    const trimmed = String(query || "").trim();
+    const limit = Math.max(1, Number(options?.limit ?? 20));
+    const offset = Math.max(0, Number(options?.offset ?? 0));
+    if (!trimmed) {
+      const items = await this.listAllDocuments();
+      const filtered = options?.categoryId
+        ? items.filter((item) => item.category_id === options.categoryId)
+        : items;
+      return {
+        items: filtered.slice(offset, offset + limit),
+        hasMore: filtered.length > offset + limit,
+      };
+    }
+    await ensureJiebaReady();
+    const tokens = tokenizeForSearch(trimmed);
+    if (!tokens.length) return {items: [], hasMore: false};
+    return this.request(`/documents/search`, "POST", {
+      tokens,
+      category_id: options?.categoryId,
+      offset,
+      limit,
+    });
   }
 
   ensureDocumentCharCount(meta: DocumentMeta): Promise<DocumentMeta> {

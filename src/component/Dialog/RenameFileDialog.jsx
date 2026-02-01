@@ -39,7 +39,7 @@ class RenameFileDialog extends Component {
   getDataStore() {
     const uid =
       (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
-    return getDataStore(undefined, Number(uid) || 0);
+    return getDataStore(Number(uid) || 0);
   }
 
   resolveDataStoreMode() {

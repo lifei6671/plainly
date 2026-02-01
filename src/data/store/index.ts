@@ -2,10 +2,11 @@ import {BrowserDataStore} from "./browser/BrowserDataStore";
 import {RemoteDataStore} from "./remote/RemoteDataStore";
 import {DataStoreMode, IDataStore} from "./IDataStore";
 
+export const DEFAULT_DATA_STORE_MODE: DataStoreMode = "remote";
+
 let cachedStore: IDataStore | null = null;
-let cachedMode: DataStoreMode = "remote";
+let cachedMode: DataStoreMode = DEFAULT_DATA_STORE_MODE;
 let cachedUserId: number | null = null;
-const SESSION_FLAG_COOKIE = "plainly_session";
 
 const resolveDefaultMode = (): DataStoreMode => {
   // 前端 vite 环境变量
@@ -20,7 +21,7 @@ const resolveDefaultMode = (): DataStoreMode => {
   if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
     return process.env.DATA_STORE_MODE as DataStoreMode;
   }
-  return "browser";
+  return DEFAULT_DATA_STORE_MODE;
 };
 
 const resolveDefaultUserId = (): number => {
@@ -54,36 +55,37 @@ const resolveDefaultUserId = (): number => {
   return 0;
 };
 
-const hasSessionCookie = (): boolean => {
-  if (typeof document === "undefined") return false;
-  return document.cookie.split(";").some((item) => item.trim().startsWith(`${SESSION_FLAG_COOKIE}=`));
-};
-
-export function getDataStore(mode?: DataStoreMode, userId?: number): IDataStore {
-  const resolvedUserId = userId ?? resolveDefaultUserId();
-  const desiredMode = mode || resolveDefaultMode();
-  const sessionActive = hasSessionCookie();
+export function getDataStore(modeOrUserId?: DataStoreMode | number, userId?: number): IDataStore {
+  let resolvedUserId = userId;
+  let desiredMode: DataStoreMode | undefined;
+  if (typeof modeOrUserId === "number") {
+    resolvedUserId = modeOrUserId;
+  } else if (typeof modeOrUserId === "string") {
+    desiredMode = modeOrUserId as DataStoreMode;
+  }
+  const finalUserId = resolvedUserId ?? resolveDefaultUserId();
+  const finalMode = desiredMode || resolveDefaultMode();
   const shouldForceBrowser =
-    (desiredMode === "remote" && (!resolvedUserId || resolvedUserId <= 0) && !sessionActive) ||
-    (desiredMode === "node" && (!resolvedUserId || resolvedUserId <= 0));
-  const effectiveMode = shouldForceBrowser ? "browser" : desiredMode;
+    (finalMode === "remote" && (!finalUserId || finalUserId <= 0)) ||
+    (finalMode === "node" && (!finalUserId || finalUserId <= 0));
+  const effectiveMode = shouldForceBrowser ? "browser" : finalMode;
 
-  if (!cachedStore || cachedMode !== effectiveMode || cachedUserId !== resolvedUserId) {
+  if (!cachedStore || cachedMode !== effectiveMode || cachedUserId !== finalUserId) {
     switch (effectiveMode) {
       case "browser":
       default:
-        cachedStore = new BrowserDataStore(resolvedUserId || 0);
+        cachedStore = new BrowserDataStore(finalUserId || 0);
         cachedMode = effectiveMode;
-        cachedUserId = resolvedUserId || 0;
+        cachedUserId = finalUserId || 0;
         break;
       case "remote": {
         const baseUrl =
           (typeof import.meta !== "undefined" && (import.meta as any).env?.VITE_API_BASE) ||
           (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
           "/api";
-        cachedStore = new RemoteDataStore(baseUrl, resolvedUserId);
+        cachedStore = new RemoteDataStore(baseUrl, finalUserId);
         cachedMode = effectiveMode;
-        cachedUserId = resolvedUserId;
+        cachedUserId = finalUserId;
         break;
       }
     }

@@ -3,7 +3,7 @@ import {
   CategoryWithCount,
   DataStoreMode,
   DocumentMeta,
-  NewDocumentPayload,
+  NewDocumentPayload, TimestampValue,
   UpdateDocumentMetaInput,
 } from "./types";
 
@@ -25,6 +25,10 @@ export interface IDataStore {
     limit: number,
   ): Promise<{items: DocumentMeta[]; hasMore: boolean}>;
   listAllDocuments(): Promise<DocumentMeta[]>;
+  searchDocuments(
+    query: string,
+    options?: {categoryId?: string; offset?: number; limit?: number},
+  ): Promise<{items: DocumentMeta[]; hasMore: boolean}>;
   ensureDocumentCharCount(meta: DocumentMeta): Promise<DocumentMeta>;
   getDocumentContent(documentId: string): Promise<string>;
   saveDocumentContent(documentId: string, content: string, updatedAt?: TimestampValue): Promise<void>;

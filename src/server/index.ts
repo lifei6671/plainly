@@ -324,6 +324,19 @@ async function main() {
     const store = ((req as any).auth as AuthContext).store;
     ok(res, await store.listAllDocuments());
   });
+  router.post("/documents/search", async (req, res) => {
+    const store = ((req as any).auth as AuthContext).store;
+    const {tokens, category_id, offset, limit} = req.body || {};
+    if (!Array.isArray(tokens)) return fail(res, "tokens required");
+    ok(
+      res,
+      await store.searchDocumentsByTokens(tokens, {
+        categoryId: category_id ? String(category_id) : undefined,
+        offset,
+        limit,
+      }),
+    );
+  });
   router.get("/documents/:id/meta", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
     ok(res, await store.getDocumentMeta(String(req.params.id)));

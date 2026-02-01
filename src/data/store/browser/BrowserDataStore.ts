@@ -1,12 +1,14 @@
 import IndexDB from "../../../component/LocalHistory/indexdb";
 import {countVisibleChars} from "../../../utils/helper";
 import {DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_ID} from "../../../utils/constant";
+import {ensureIndexReady, search as searchIndex} from "../../../search";
 import {
   Category,
   CategoryWithCount,
   DocumentMeta,
   NewDocumentPayload,
   SourceType,
+  TimestampValue,
   UpdateDocumentMetaInput,
 } from "../types";
 import {IDataStore} from "../IDataStore";
@@ -1070,6 +1072,69 @@ export class BrowserDataStore implements IDataStore {
       items = await this.readAllArticleMeta(db);
     }
     return items;
+  }
+
+  async searchDocuments(
+    query: string,
+    options?: {categoryId?: string; offset?: number; limit?: number},
+  ): Promise<{items: DocumentMeta[]; hasMore: boolean}> {
+    const trimmedQuery = String(query || "").trim();
+    const limit = Math.max(1, Number(options?.limit ?? 20));
+    const offset = Math.max(0, Number(options?.offset ?? 0));
+    const categories = await this.listCategories();
+    const categoriesById: CategoriesByLegacyId = new Map();
+    const categoriesByUuid: CategoriesByUuid = new Map();
+    const categoriesByName: CategoriesByName = new Map();
+    categories.forEach((category) => {
+      if (category.category_id) {
+        categoriesByUuid.set(category.category_id, category);
+      }
+      if (typeof category.id === "number") {
+        categoriesById.set(category.id, category.category_id);
+      }
+      if (category.name) {
+        categoriesByName.set(category.name, category.category_id);
+      }
+    });
+    const items = await this.listAllDocuments();
+    let normalizedItems = items.map((item) => ({
+      ...item,
+      category_id: this.normalizeCategory(
+        (item as any).category_id ?? (item as any).category,
+        categoriesById,
+        categoriesByUuid,
+        categoriesByName,
+      ),
+    }));
+    if (options?.categoryId != null) {
+      const normalizedFilter = this.normalizeCategory(
+        options.categoryId,
+        categoriesById,
+        categoriesByUuid,
+        categoriesByName,
+      );
+      normalizedItems = normalizedItems.filter((item) => item.category_id === normalizedFilter);
+    }
+    if (!trimmedQuery) {
+      const paged = normalizedItems.slice(offset, offset + limit);
+      return {items: paged, hasMore: normalizedItems.length > offset + limit};
+    }
+    let idx = null;
+    try {
+      idx = await ensureIndexReady();
+    } catch (e) {
+      console.error(e);
+      return {items: [], hasMore: false};
+    }
+    if (!idx) return {items: [], hasMore: false};
+    const itemsById = new Map<string, DocumentMeta>();
+    normalizedItems.forEach((item) => {
+      itemsById.set(String(item.document_id), item);
+    });
+    const results = searchIndex(idx, trimmedQuery);
+    const matched = results.map((result) => itemsById.get(result.ref)).filter(Boolean);
+    const paged = matched.slice(offset, offset + limit);
+    return {items: paged, hasMore: matched.length > offset + limit};
   }
 
   /**
