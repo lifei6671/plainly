@@ -341,6 +341,10 @@ async function main() {
     const store = ((req as any).auth as AuthContext).store;
     ok(res, await store.getDocumentMeta(String(req.params.id)));
   });
+  router.get("/documents/:id/rename", async (req, res) => {
+    const store = ((req as any).auth as AuthContext).store;
+    ok(res, await store.getRenameData(String(req.params.id)));
+  });
   router.patch("/documents/:id/meta", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
     await store.updateDocumentMeta(String(req.params.id), req.body as UpdateDocumentMetaInput);

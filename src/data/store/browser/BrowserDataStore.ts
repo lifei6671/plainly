@@ -7,6 +7,7 @@ import {
   CategoryWithCount,
   DocumentMeta,
   NewDocumentPayload,
+  RenameDocumentPayload,
   SourceType,
   TimestampValue,
   UpdateDocumentMetaInput,
@@ -943,6 +944,14 @@ export class BrowserDataStore implements IDataStore {
       };
       request.onerror = () => resolve(null);
     });
+  }
+
+  async getRenameData(documentUuid: string): Promise<RenameDocumentPayload> {
+    const [meta, categories] = await Promise.all([
+      this.getDocumentMeta(documentUuid),
+      this.listCategories(),
+    ]);
+    return {meta, categories};
   }
 
   async updateDocumentMeta(documentUuid: string, updates: UpdateDocumentMetaInput): Promise<void> {

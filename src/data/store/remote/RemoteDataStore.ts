@@ -1,5 +1,12 @@
 import {IDataStore} from "../IDataStore";
-import {Category, CategoryWithCount, DocumentMeta, NewDocumentPayload, UpdateDocumentMetaInput} from "../types";
+import {
+  Category,
+  CategoryWithCount,
+  DocumentMeta,
+  NewDocumentPayload,
+  RenameDocumentPayload,
+  UpdateDocumentMetaInput,
+} from "../types";
 import {ensureJiebaReady, tokenizeForSearch} from "../../../search/jieba-tokenizer";
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
@@ -104,6 +111,10 @@ export class RemoteDataStore implements IDataStore {
 
   getDocumentMeta(documentId: string): Promise<DocumentMeta | null> {
     return this.request<DocumentMeta | null>(`/documents/${encodeURIComponent(documentId)}/meta`);
+  }
+
+  getRenameData(documentId: string): Promise<RenameDocumentPayload> {
+    return this.request<RenameDocumentPayload>(`/documents/${encodeURIComponent(documentId)}/rename`);
   }
 
   updateDocumentMeta(documentId: string, updates: UpdateDocumentMetaInput): Promise<void> {

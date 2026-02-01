@@ -29,6 +29,11 @@ export interface DocumentMeta {
   uid?: number;
 }
 
+export interface RenameDocumentPayload {
+  meta: DocumentMeta | null;
+  categories: Category[];
+}
+
 export interface NewDocumentPayload {
   document_id?: string;
   name: string;

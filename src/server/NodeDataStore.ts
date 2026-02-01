@@ -7,6 +7,7 @@ import {
   CategoryWithCount,
   DocumentMeta,
   NewDocumentPayload,
+  RenameDocumentPayload,
   UpdateDocumentMetaInput,
   User,
   UserSession,
@@ -1080,6 +1081,14 @@ export class NodeDataStore implements IDataStore {
     this.ensureUserExists();
     const row = this.getDocumentRowByUuid(documentUuid);
     return row ? mapSqlDocToMeta(row) : null;
+  }
+
+  async getRenameData(documentUuid: string): Promise<RenameDocumentPayload> {
+    const [meta, categories] = await Promise.all([
+      this.getDocumentMeta(documentUuid),
+      this.listCategories(),
+    ]);
+    return {meta, categories};
   }
 
   async updateDocumentMeta(documentUuid: string, updates: UpdateDocumentMetaInput): Promise<void> {

@@ -3,7 +3,9 @@ import {
   CategoryWithCount,
   DataStoreMode,
   DocumentMeta,
-  NewDocumentPayload, TimestampValue,
+  NewDocumentPayload,
+  RenameDocumentPayload,
+  TimestampValue,
   UpdateDocumentMetaInput,
 } from "./types";
 
@@ -19,6 +21,7 @@ export interface IDataStore {
   deleteCategory(categoryId: string, options?: {reassignTo?: string}): Promise<void>;
   createDocument(meta: NewDocumentPayload, content: string): Promise<DocumentMeta>;
   getDocumentMeta(documentId: string): Promise<DocumentMeta | null>;
+  getRenameData(documentId: string): Promise<RenameDocumentPayload>;
   updateDocumentMeta(documentId: string, updates: UpdateDocumentMetaInput): Promise<void>;
   listDocumentsPage(
     offset: number,
@@ -49,5 +52,6 @@ export type {
   DataStoreMode,
   DocumentMeta,
   NewDocumentPayload,
+  RenameDocumentPayload,
   UpdateDocumentMetaInput,
 };

@@ -1361,6 +1361,12 @@ export async function handleApiRequest(request, env) {
         const row = await getDocumentRowByUuid(env.DB, userId, documentId);
         return jsonResponse(request, row ? mapDoc(row) : null);
       }
+      if (request.method === "GET" && segments.length === 3 && segments[2] === "rename") {
+        const documentId = decodeURIComponent(segments[1] || "");
+        const row = await getDocumentRowByUuid(env.DB, userId, documentId);
+        const categories = await listCategories(env.DB, userId);
+        return jsonResponse(request, {meta: row ? mapDoc(row) : null, categories});
+      }
       if (request.method === "PATCH" && segments.length === 3 && segments[2] === "meta") {
         const documentId = decodeURIComponent(segments[1] || "");
         const body = await readJson(request);

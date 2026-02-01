@@ -71,19 +71,28 @@ class RenameFileDialog extends Component {
 
   openDialog = async () => {
     this.resetNameFromStore();
-    const categories = await this.loadCategories();
-    await this.loadCategoryFromStore(categories);
+    const {meta, categories} = await this.loadRenameData();
+    await this.cacheCategories(categories);
+    this.setState({categories});
+    this.applyCategoryFromMeta(meta, categories);
   };
 
-  loadCategories = async () => {
+  loadRenameData = async () => {
+    const {documentUuid} = this.props.content;
+    const store = this.getDataStore();
     try {
-      const categories = await this.getDataStore().listCategories();
-      await this.cacheCategories(categories);
-      this.setState({categories});
-      return categories;
+      if (documentUuid) {
+        const payload = await store.getRenameData(documentUuid);
+        return {
+          meta: payload?.meta || null,
+          categories: Array.isArray(payload?.categories) ? payload.categories : [],
+        };
+      }
+      const categories = await store.listCategories();
+      return {meta: null, categories};
     } catch (e) {
       console.error(e);
-      return [];
+      return {meta: null, categories: []};
     }
   };
 
@@ -123,21 +132,10 @@ class RenameFileDialog extends Component {
     return {uuid: DEFAULT_CATEGORY_UUID, name: DEFAULT_CATEGORY_NAME};
   };
 
-  loadCategoryFromStore = async (categories = this.state.categories) => {
-    const {documentUuid} = this.props.content;
-    if (!documentUuid) {
-      this.setState({categoryUuid: DEFAULT_CATEGORY_UUID});
-      return;
-    }
-    try {
-      const meta = await this.getDataStore().getDocumentMeta(documentUuid);
-      const normalized = this.normalizeCategoryInfo(meta ? meta.category_id || meta.category : null, categories);
-      this.setState({categoryUuid: normalized.uuid});
-      this.props.content.setDocumentCategory(normalized.uuid, normalized.name);
-    } catch (e) {
-      console.error(e);
-      this.setState({categoryUuid: DEFAULT_CATEGORY_UUID});
-    }
+  applyCategoryFromMeta = (meta, categories) => {
+    const normalized = this.normalizeCategoryInfo(meta ? meta.category_id || meta.category : null, categories);
+    this.setState({categoryUuid: normalized.uuid});
+    this.props.content.setDocumentCategory(normalized.uuid, normalized.name);
   };
 
   resetNameFromStore = () => {
