@@ -1,10 +1,14 @@
 export type TimestampValue = Date | string | number;
+export type SourceType = "local" | "remote";
 
 export interface Category {
   id: number;
+  category_id: string;
   name: string;
   createdAt: TimestampValue;
   updatedAt: TimestampValue;
+  source?: SourceType;
+  version?: number;
   uid?: number;
 }
 
@@ -13,29 +17,37 @@ export interface CategoryWithCount extends Category {
 }
 
 export interface DocumentMeta {
-  document_id: number;
+  id?: number;
+  document_id: string;
   name: string;
-  category: number | string;
+  category_id: string;
   createdAt: TimestampValue;
   updatedAt: TimestampValue;
   charCount?: number;
+  source?: SourceType;
+  version?: number;
   uid?: number;
 }
 
 export interface NewDocumentPayload {
+  document_id?: string;
   name: string;
-  category: number;
+  category_id: string;
   charCount?: number;
   createdAt: TimestampValue;
   updatedAt: TimestampValue;
+  source?: SourceType;
+  version?: number;
   uid?: number;
 }
 
 export interface UpdateDocumentMetaInput {
   name?: string;
-  category?: number;
+  category_id?: string;
   updatedAt?: TimestampValue;
   charCount?: number;
+  source?: SourceType;
+  version?: number;
   uid?: number;
 }
 

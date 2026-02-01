@@ -3,7 +3,8 @@ import {observer, inject} from "mobx-react";
 import {Modal, Table, Button, Input, message} from "antd";
 import {ReloadOutlined} from "@ant-design/icons";
 import {getDataStore} from "../../data/store";
-import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
+import {BrowserDataStore} from "../../data/store/browser/BrowserDataStore";
+import {DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_UUID} from "../../utils/constant";
 
 @inject("dialog")
 @inject("content")
@@ -17,7 +18,7 @@ class CategoryManageDialog extends Component {
       categories: [],
       loading: false,
       renameVisible: false,
-      renameId: null,
+      renameUuid: null,
       renameValue: "",
       createVisible: false,
       createValue: "",
@@ -37,6 +38,34 @@ class CategoryManageDialog extends Component {
       this.loadCategories();
     }
     this.wasOpen = isOpen;
+  }
+
+  resolveDataStoreMode() {
+    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
+      return import.meta.env.VITE_DATA_STORE;
+    }
+    if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
+      return window.__DATA_STORE_MODE__;
+    }
+    if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
+      return process.env.DATA_STORE_MODE;
+    }
+    return "browser";
+  }
+
+  getRuntimeUserId() {
+    if (typeof window === "undefined") return 0;
+    return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
+  }
+
+  shouldCacheRemote() {
+    return this.resolveDataStoreMode() === "remote" && this.getRuntimeUserId() > 0;
+  }
+
+  getCacheStore() {
+    if (!this.shouldCacheRemote()) return null;
+    const uid = this.getRuntimeUserId();
+    return new BrowserDataStore(Number(uid) || 0);
   }
 
   formatTime = (value) => {
@@ -60,6 +89,7 @@ class CategoryManageDialog extends Component {
         (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
       const store = getDataStore("remote", Number(uid) || 0);
       const categories = await store.listCategoriesWithCount();
+      await this.cacheCategories(categories);
       this.setState({categories});
     } catch (e) {
       console.error(e);
@@ -73,19 +103,19 @@ class CategoryManageDialog extends Component {
     if (!category) {
       return;
     }
-    if (category.id === DEFAULT_CATEGORY_ID) {
+    if (category.category_id === DEFAULT_CATEGORY_UUID) {
       message.warning("默认目录不支持重命名");
       return;
     }
     this.setState({
       renameVisible: true,
-      renameId: category.id,
+      renameUuid: category.category_id,
       renameValue: category.name || "",
     });
   };
 
   closeRename = () => {
-    this.setState({renameVisible: false, renameId: null, renameValue: ""});
+    this.setState({renameVisible: false, renameUuid: null, renameValue: ""});
   };
 
   openCreate = () => {
@@ -114,7 +144,8 @@ class CategoryManageDialog extends Component {
       const uid =
         (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
       const store = getDataStore("remote", Number(uid) || 0);
-      await store.createCategory(nextName);
+      const created = await store.createCategory(nextName);
+      await this.cacheCategories([created]);
       message.success("新建目录成功");
       this.closeCreate();
       this.loadCategories();
@@ -125,9 +156,9 @@ class CategoryManageDialog extends Component {
   };
 
   handleRenameOk = async () => {
-    const {renameId, renameValue, categories} = this.state;
+    const {renameUuid, renameValue, categories} = this.state;
     const nextName = String(renameValue || "").trim();
-    if (!renameId) {
+    if (!renameUuid) {
       return;
     }
     if (!nextName) {
@@ -138,7 +169,7 @@ class CategoryManageDialog extends Component {
       message.error("目录名称已存在");
       return;
     }
-    if (categories.some((item) => item.name === nextName && item.id !== renameId)) {
+    if (categories.some((item) => item.name === nextName && item.category_id !== renameUuid)) {
       message.error("目录名称已存在");
       return;
     }
@@ -146,11 +177,12 @@ class CategoryManageDialog extends Component {
       const uid =
         (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
       const store = getDataStore("remote", Number(uid) || 0);
-      await store.renameCategory(renameId, nextName);
+      await store.renameCategory(renameUuid, nextName);
       message.success("重命名成功");
-      if (this.props.content.documentCategoryId === renameId) {
+      if (this.props.content.documentCategoryUuid === renameUuid) {
         this.props.content.setDocumentCategoryName(nextName);
       }
+      await this.cacheCategories([{category_id: renameUuid, name: nextName, source: "remote", uid}]);
       this.closeRename();
       this.loadCategories();
     } catch (e) {
@@ -163,7 +195,7 @@ class CategoryManageDialog extends Component {
     if (!category) {
       return;
     }
-    if (category.id === DEFAULT_CATEGORY_ID) {
+    if (category.category_id === DEFAULT_CATEGORY_UUID) {
       message.warning("默认目录不可删除");
       return;
     }
@@ -183,10 +215,11 @@ class CategoryManageDialog extends Component {
       const uid =
         (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
       const store = getDataStore("remote", Number(uid) || 0);
-      await store.deleteCategory(category.id, {reassignTo: DEFAULT_CATEGORY_ID});
-      if (this.props.content.documentCategoryId === category.id) {
-        this.props.content.setDocumentCategory(DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME);
+      await store.deleteCategory(category.category_id, {reassignTo: DEFAULT_CATEGORY_UUID});
+      if (this.props.content.documentCategoryUuid === category.category_id) {
+        this.props.content.setDocumentCategory(DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME);
       }
+      await this.cacheDeleteCategory(category.category_id);
       message.success("删除成功");
       this.loadCategories();
     } catch (e) {
@@ -222,7 +255,7 @@ class CategoryManageDialog extends Component {
         key: "action",
         width: 180,
         render: (_, record) => {
-          const isDefault = record.id === DEFAULT_CATEGORY_ID;
+          const isDefault = record.category_id === DEFAULT_CATEGORY_UUID;
           return (
             <>
               <Button type="link" disabled={isDefault} onClick={() => this.openRename(record)} title="重命名">
@@ -259,7 +292,7 @@ class CategoryManageDialog extends Component {
             <Button icon={<ReloadOutlined />} onClick={this.loadCategories} title="刷新" />
           </div>
           <Table
-            rowKey="id"
+            rowKey="category_id"
             columns={columns}
             dataSource={this.state.categories}
             loading={this.state.loading}
@@ -299,6 +332,30 @@ class CategoryManageDialog extends Component {
       </>
     );
   }
+
+  cacheCategories = async (categories) => {
+    if (!this.shouldCacheRemote()) return;
+    const cache = this.getCacheStore();
+    if (!cache) return;
+    await cache.init();
+    await Promise.all(
+      categories.map((category) =>
+        cache.upsertCategorySnapshot({
+          ...category,
+          source: "remote",
+          uid: this.getRuntimeUserId(),
+        }),
+      ),
+    );
+  };
+
+  cacheDeleteCategory = async (categoryUuid) => {
+    if (!this.shouldCacheRemote()) return;
+    const cache = this.getCacheStore();
+    if (!cache) return;
+    await cache.init();
+    await cache.deleteCategory(categoryUuid, {reassignTo: DEFAULT_CATEGORY_UUID});
+  };
 }
 
 export default CategoryManageDialog;

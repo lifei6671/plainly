@@ -26,6 +26,7 @@ import {
   MJX_DATA_FORMULA,
   MJX_DATA_FORMULA_TYPE,
   DEFAULT_CATEGORY_NAME,
+  DEFAULT_CATEGORY_UUID,
 } from "./utils/constant";
 import {countVisibleChars, markdownParser, markdownParserWechat, updateMathjax} from "./utils/helper";
 import pluginCenter from "./utils/pluginCenter";
@@ -35,6 +36,11 @@ import bindHotkeys, {betterTab, rightClick} from "./utils/hotkey";
 import AuthModal from "./component/Auth/AuthModal";
 import {getConfigSync, setConfigSync} from "./utils/configStore";
 import {Button} from "antd";
+import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
+import {getDataStore} from "./data/store";
+import {markIndexDirty, scheduleIndexRebuild} from "./search";
+
+const SESSION_FLAG_COOKIE = "plainly_session";
 
 @inject("content")
 @inject("navbar")
@@ -78,6 +84,145 @@ class App extends Component {
         window.__DATA_STORE_USER_ID__ = 0;
         window.__CURRENT_USER_ID__ = 0;
       }
+    }
+  };
+
+  getRuntimeUserId = () => {
+    if (typeof window === "undefined") return 0;
+    return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
+  };
+
+  hasSessionCookie = () => {
+    if (typeof document === "undefined") return false;
+    return document.cookie.split(";").some((item) => item.trim().startsWith(`${SESSION_FLAG_COOKIE}=`));
+  };
+
+  syncLocalToRemote = async (user) => {
+    if (!this.isRemoteMode || !user || !user.id) return;
+    try {
+      const localStore = new BrowserDataStore(0);
+      await localStore.init();
+      const remoteStore = getDataStore("remote", Number(user.id) || 0);
+      const localCategories = await localStore.listCategories();
+      const categoryUuidMap = new Map();
+      const categoryItems = localCategories
+        .filter((category) => category && category.category_id !== DEFAULT_CATEGORY_UUID)
+        .map((category) => ({
+          name: category.name,
+          category_id: category.category_id,
+          source: "local",
+          version: category.version ?? 1,
+        }));
+      if (categoryItems.length > 0) {
+        try {
+          const result = await remoteStore.batchCreateCategories(categoryItems);
+          const items = (result && result.items) || [];
+          for (const item of items) {
+            const clientId = item?.client_id;
+            const created = item?.category;
+            if (!clientId || !created || !created.category_id) continue;
+            categoryUuidMap.set(clientId, created.category_id);
+            if (created.category_id !== clientId) {
+              await localStore.remapCategoryUuid(clientId, created.category_id);
+              if (this.props.content.documentCategoryUuid === clientId) {
+                this.props.content.setDocumentCategory(created.category_id, created.name || DEFAULT_CATEGORY_NAME);
+              }
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      const localDocuments = await localStore.listAllDocuments();
+      const documentItems = await Promise.all(
+        localDocuments
+          .filter((doc) => doc && doc.document_id)
+          .map(async (doc) => {
+            const content = await localStore.getDocumentContent(doc.document_id);
+            const mappedCategoryUuid =
+              categoryUuidMap.get(doc.category_id) || doc.category_id || DEFAULT_CATEGORY_UUID;
+            return {
+              meta: {
+                document_id: doc.document_id,
+                name: doc.name,
+                category_id: mappedCategoryUuid,
+                createdAt: doc.createdAt,
+                updatedAt: doc.updatedAt,
+                charCount: doc.charCount,
+                source: "local",
+                version: doc.version ?? 1,
+              },
+              content: content || "",
+            };
+          }),
+      );
+      const filteredDocs = documentItems.filter((item) => item && item.meta && item.meta.document_id);
+      if (filteredDocs.length > 0) {
+        try {
+          const result = await remoteStore.batchCreateDocuments(filteredDocs);
+          const items = (result && result.items) || [];
+          for (const item of items) {
+            const clientId = item?.client_id;
+            const created = item?.document;
+            if (!clientId || !created || !created.document_id) continue;
+            if (created.document_id !== clientId) {
+              await localStore.remapDocumentUuid(clientId, created.document_id);
+              if (this.props.content.documentUuid === clientId) {
+                this.props.content.setDocumentUuid(created.document_id);
+              }
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  clearRemoteHistory = async (userId) => {
+    if (!userId || typeof indexedDB === "undefined") return;
+    await new Promise((resolve) => {
+      const request = indexedDB.open("mdnice-local-history");
+      request.onerror = () => resolve();
+      request.onsuccess = (event) => {
+        const db = event.target.result;
+        if (!db || !db.objectStoreNames.contains("customers")) {
+          resolve();
+          return;
+        }
+        const tx = db.transaction(["customers"], "readwrite");
+        const store = tx.objectStore("customers");
+        const cursorReq = store.openCursor();
+        cursorReq.onsuccess = (cursorEvent) => {
+          const cursor = cursorEvent.target.result;
+          if (!cursor) return;
+          const value = cursor.value || {};
+          const uid = Number(value.Uid || 0);
+          if (uid === userId && value.Source === "remote") {
+            cursor.delete();
+          }
+          cursor.continue();
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      };
+    });
+  };
+
+  clearRemoteCache = async (userId) => {
+    if (!userId) return;
+    const cacheStore = new BrowserDataStore(Number(userId) || 0);
+    await cacheStore.init();
+    await cacheStore.clearRemoteData();
+    await this.clearRemoteHistory(Number(userId) || 0);
+    try {
+      await markIndexDirty();
+      scheduleIndexRebuild();
+    } catch (e) {
+      console.error(e);
     }
   };
 
@@ -207,9 +352,7 @@ class App extends Component {
       this.setState({currentUser: null});
       return;
     }
-    const runtimeUid =
-      (typeof window !== "undefined" && (window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__)) || 0;
-    if (!runtimeUid) {
+    if (!this.hasSessionCookie()) {
       this.setRuntimeUser(null);
       this.setState({currentUser: null});
       return;
@@ -257,6 +400,7 @@ class App extends Component {
     const mapped = this.mapUser(resp?.user);
     this.setRuntimeUser(mapped);
     this.setState({currentUser: mapped});
+    await this.syncLocalToRemote(mapped);
   };
 
   handleRegister = async (username, password) => {
@@ -265,19 +409,28 @@ class App extends Component {
     const mapped = this.mapUser(resp?.user);
     this.setRuntimeUser(mapped);
     this.setState({currentUser: mapped});
+    await this.syncLocalToRemote(mapped);
   };
 
   handleUpdatePassword = async (oldPwd, newPwd) => {
     if (!this.isRemoteMode) throw new Error("当前为浏览器本地模式，无法修改密码");
     await this.apiRequest("/auth/password", "POST", {oldPassword: oldPwd, newPassword: newPwd});
+    const userId = this.state.currentUser?.id || this.getRuntimeUserId();
+    await this.clearRemoteCache(userId);
     this.setRuntimeUser(null);
     this.setState({currentUser: null});
   };
 
   handleLogout = async () => {
+    const userId = this.state.currentUser?.id || this.getRuntimeUserId();
     if (this.isRemoteMode) {
-      await this.apiRequest("/auth/logout", "POST");
+      try {
+        await this.apiRequest("/auth/logout", "POST");
+      } catch (e) {
+        console.error(e);
+      }
     }
+    await this.clearRemoteCache(userId);
     this.setRuntimeUser(null);
     this.setState({currentUser: null});
   };

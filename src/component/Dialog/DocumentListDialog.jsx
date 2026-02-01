@@ -4,7 +4,8 @@ import {Modal, Table, Button, Empty, message, Select, Input} from "antd";
 import {SearchOutlined} from "@ant-design/icons";
 import {ensureIndexReady, markIndexDirty, scheduleIndexRebuild, search as searchIndex} from "../../search";
 import {getDataStore} from "../../data/store";
-import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
+import {BrowserDataStore} from "../../data/store/browser/BrowserDataStore";
+import {DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_UUID} from "../../utils/constant";
 
 const ALL_CATEGORY_ID = "all";
 
@@ -28,7 +29,7 @@ class DocumentListDialog extends Component {
       loadingMore: false,
       hasMore: false,
       categories: [],
-      selectedCategoryId: ALL_CATEGORY_ID,
+      selectedCategoryUuid: ALL_CATEGORY_ID,
       searchText: "",
       searchQuery: "",
     };
@@ -48,10 +49,38 @@ class DocumentListDialog extends Component {
     return getDataStore("remote", Number(uid) || 0);
   }
 
+  resolveDataStoreMode() {
+    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
+      return import.meta.env.VITE_DATA_STORE;
+    }
+    if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
+      return window.__DATA_STORE_MODE__;
+    }
+    if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
+      return process.env.DATA_STORE_MODE;
+    }
+    return "browser";
+  }
+
+  getRuntimeUserId() {
+    if (typeof window === "undefined") return 0;
+    return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
+  }
+
+  shouldCacheRemote() {
+    return this.resolveDataStoreMode() === "remote" && this.getRuntimeUserId() > 0;
+  }
+
+  getCacheStore() {
+    if (!this.shouldCacheRemote()) return null;
+    const uid = this.getRuntimeUserId();
+    return new BrowserDataStore(Number(uid) || 0);
+  }
+
   componentDidUpdate() {
     const isOpen = this.props.dialog.isDocumentListOpen;
     if (isOpen && !this.wasOpen) {
-      this.setState({selectedCategoryId: ALL_CATEGORY_ID, searchText: "", searchQuery: ""}, () => {
+      this.setState({selectedCategoryUuid: ALL_CATEGORY_ID, searchText: "", searchQuery: ""}, () => {
         this.loadCategories();
         this.loadArticles();
       });
@@ -62,6 +91,7 @@ class DocumentListDialog extends Component {
   loadCategories = async () => {
     try {
       const categories = await this.getDataStore().listCategories();
+      await this.cacheCategories(categories);
       this.setState({categories});
       return categories;
     } catch (e) {
@@ -71,33 +101,46 @@ class DocumentListDialog extends Component {
   };
 
   buildCategoryLookup = (categories) => {
-    const byId = new Map();
+    const byUuid = new Map();
     const byName = new Map();
+    const byLegacyId = new Map();
     categories.forEach((category) => {
-      byId.set(category.id, category);
+      if (category.category_id) {
+        byUuid.set(category.category_id, category);
+      }
+      if (typeof category.id === "number") {
+        byLegacyId.set(category.id, category.category_id);
+      }
       if (category.name) {
-        byName.set(category.name, category.id);
+        byName.set(category.name, category.category_id);
       }
     });
-    return {byId, byName};
+    return {byUuid, byName, byLegacyId};
   };
 
   normalizeCategoryId = (value, categories) => {
-    const {byId, byName} = this.buildCategoryLookup(categories);
-    if (typeof value === "number") {
-      return byId.has(value) ? value : DEFAULT_CATEGORY_ID;
-    }
+    const {byUuid, byName, byLegacyId} = this.buildCategoryLookup(categories);
     if (typeof value === "string" && value.trim()) {
       const trimmed = value.trim();
+      const normalized = trimmed.replace(/-/g, "");
+      if (byUuid.has(normalized)) {
+        return normalized;
+      }
+      if (byUuid.has(trimmed)) {
+        return trimmed;
+      }
       if (byName.has(trimmed)) {
         return byName.get(trimmed);
       }
       const parsed = Number(trimmed);
-      if (!Number.isNaN(parsed) && byId.has(parsed)) {
-        return parsed;
+      if (!Number.isNaN(parsed) && byLegacyId.has(parsed)) {
+        return byLegacyId.get(parsed);
       }
     }
-    return DEFAULT_CATEGORY_ID;
+    if (typeof value === "number") {
+      return byLegacyId.has(value) ? byLegacyId.get(value) : DEFAULT_CATEGORY_UUID;
+    }
+    return DEFAULT_CATEGORY_UUID;
   };
 
   formatTime = (value) => {
@@ -138,7 +181,7 @@ class DocumentListDialog extends Component {
         this.setState({loadingMore: true});
       }
       const useFilters =
-        this.state.selectedCategoryId !== ALL_CATEGORY_ID || String(this.state.searchQuery || "").trim() !== "";
+        this.state.selectedCategoryUuid !== ALL_CATEGORY_ID || String(this.state.searchQuery || "").trim() !== "";
       let items = [];
       let hasMore = false;
       if (useFilters) {
@@ -154,6 +197,7 @@ class DocumentListDialog extends Component {
         const store = this.getDataStore();
         items = await Promise.all(items.map((item) => store.ensureDocumentCharCount(item)));
       }
+      await this.cacheDocuments(items);
       this.setState((prevState) => ({
         articles: reset ? items : prevState.articles.concat(items),
         hasMore,
@@ -172,11 +216,11 @@ class DocumentListDialog extends Component {
     const items = await this.getDataStore().listAllDocuments();
     const normalizedItems = items.map((item) => ({
       ...item,
-      category: this.normalizeCategoryId(item.category, categories),
+      category_id: this.normalizeCategoryId(item.category_id || item.category, categories),
     }));
     let filtered = normalizedItems;
-    if (this.state.selectedCategoryId !== ALL_CATEGORY_ID) {
-      filtered = filtered.filter((item) => item.category === this.state.selectedCategoryId);
+    if (this.state.selectedCategoryUuid !== ALL_CATEGORY_ID) {
+      filtered = filtered.filter((item) => item.category_id === this.state.selectedCategoryUuid);
     }
     const query = String(this.state.searchQuery || "").trim();
     if (!query) {
@@ -205,7 +249,7 @@ class DocumentListDialog extends Component {
   };
 
   handleCategoryChange = (value) => {
-    const nextState = {selectedCategoryId: value};
+    const nextState = {selectedCategoryUuid: value};
     if (!String(this.state.searchText || "").trim()) {
       nextState.searchQuery = "";
     }
@@ -226,15 +270,15 @@ class DocumentListDialog extends Component {
   };
 
   loadIntoEditor = async (article) => {
-    if (!article || article.document_id == null) {
+    if (!article || !article.document_id) {
       return;
     }
     try {
       const content = await this.getDataStore().getDocumentContent(article.document_id);
-      const categoryInfo = await this.resolveCategoryInfo(article.category);
-      this.props.content.setDocumentId(article.document_id);
+      const categoryInfo = await this.resolveCategoryInfo(article.category_id || article.category);
+      this.props.content.setDocumentUuid(article.document_id);
       this.props.content.setDocumentName(article.name || "未命名.md");
-      this.props.content.setDocumentCategory(categoryInfo.id, categoryInfo.name);
+      this.props.content.setDocumentCategory(categoryInfo.uuid, categoryInfo.name);
       this.props.content.setDocumentUpdatedAt(article.updatedAt || article.createdAt || 0);
       this.props.content.setContent(content);
       const {markdownEditor} = this.props.content;
@@ -242,6 +286,7 @@ class DocumentListDialog extends Component {
         markdownEditor.setValue(content);
         markdownEditor.focus();
       }
+      await this.cacheDocuments([{...article, content}]);
       this.props.dialog.setDocumentListOpen(false);
     } catch (e) {
       console.error(e);
@@ -251,38 +296,46 @@ class DocumentListDialog extends Component {
 
   resolveCategoryInfo = async (value) => {
     const categories = await this.loadCategories();
-    const mapById = new Map();
+    const mapByUuid = new Map();
     const mapByName = new Map();
+    const mapByLegacyId = new Map();
     categories.forEach((category) => {
-      mapById.set(category.id, category);
+      mapByUuid.set(category.category_id, category);
+      if (typeof category.id === "number") {
+        mapByLegacyId.set(category.id, category);
+      }
       if (category.name) {
         mapByName.set(category.name, category);
       }
     });
-    if (typeof value === "number" && mapById.has(value)) {
-      const category = mapById.get(value);
-      return {id: category.id, name: category.name || DEFAULT_CATEGORY_NAME};
-    }
     if (typeof value === "string" && value.trim()) {
       const trimmed = value.trim();
+      if (mapByUuid.has(trimmed)) {
+        const category = mapByUuid.get(trimmed);
+        return {uuid: category.category_id, name: category.name || DEFAULT_CATEGORY_NAME};
+      }
       if (mapByName.has(trimmed)) {
         const category = mapByName.get(trimmed);
-        return {id: category.id, name: category.name || DEFAULT_CATEGORY_NAME};
+        return {uuid: category.category_id, name: category.name || DEFAULT_CATEGORY_NAME};
       }
       const parsed = Number(trimmed);
-      if (!Number.isNaN(parsed) && mapById.has(parsed)) {
-        const category = mapById.get(parsed);
-        return {id: category.id, name: category.name || DEFAULT_CATEGORY_NAME};
+      if (!Number.isNaN(parsed) && mapByLegacyId.has(parsed)) {
+        const category = mapByLegacyId.get(parsed);
+        return {uuid: category.category_id, name: category.name || DEFAULT_CATEGORY_NAME};
       }
     }
-    return {id: DEFAULT_CATEGORY_ID, name: DEFAULT_CATEGORY_NAME};
+    if (typeof value === "number" && mapByLegacyId.has(value)) {
+      const category = mapByLegacyId.get(value);
+      return {uuid: category.category_id, name: category.name || DEFAULT_CATEGORY_NAME};
+    }
+    return {uuid: DEFAULT_CATEGORY_UUID, name: DEFAULT_CATEGORY_NAME};
   };
 
   deleteArticle = async (article) => {
-    if (!article || article.document_id == null) {
+    if (!article || !article.document_id) {
       return;
     }
-    if (article.document_id === this.props.content.documentId) {
+    if (article.document_id === this.props.content.documentUuid) {
       message.warning("当前正在编辑该文档，不能删除。");
       return;
     }
@@ -295,10 +348,11 @@ class DocumentListDialog extends Component {
         new Promise((resolve, reject) => {
           this.getDataStore()
             .deleteDocument(article.document_id)
-            .then(() => {
+            .then(async () => {
               this.setState((prevState) => ({
                 articles: prevState.articles.filter((item) => item.document_id !== article.document_id),
               }));
+              await this.cacheDeleteDocument(article.document_id);
               message.success("删除成功");
               markIndexDirty()
                 .then(scheduleIndexRebuild)
@@ -311,6 +365,49 @@ class DocumentListDialog extends Component {
             });
         }),
     });
+  };
+
+  cacheCategories = async (categories) => {
+    if (!this.shouldCacheRemote()) return;
+    const cache = this.getCacheStore();
+    if (!cache) return;
+    await cache.init();
+    await Promise.all(
+      categories.map((category) =>
+        cache.upsertCategorySnapshot({
+          ...category,
+          source: "remote",
+          uid: this.getRuntimeUserId(),
+        }),
+      ),
+    );
+  };
+
+  cacheDocuments = async (documents) => {
+    if (!this.shouldCacheRemote()) return;
+    const cache = this.getCacheStore();
+    if (!cache) return;
+    await cache.init();
+    await Promise.all(
+      documents.map((doc) =>
+        cache.upsertDocumentSnapshot(
+          {
+            ...doc,
+            source: "remote",
+            uid: this.getRuntimeUserId(),
+          },
+          typeof doc?.content === "string" ? doc.content : undefined,
+        ),
+      ),
+    );
+  };
+
+  cacheDeleteDocument = async (documentUuid) => {
+    if (!this.shouldCacheRemote()) return;
+    const cache = this.getCacheStore();
+    if (!cache) return;
+    await cache.init();
+    await cache.deleteDocument(documentUuid);
   };
 
   render() {
@@ -365,7 +462,7 @@ class DocumentListDialog extends Component {
     } else if (this.state.hasMore) {
       loadMoreText = "加载更多";
     }
-    const categoryOptions = [{id: ALL_CATEGORY_ID, name: "全部"}, ...this.state.categories];
+    const categoryOptions = [{category_id: ALL_CATEGORY_ID, name: "全部"}, ...this.state.categories];
 
     return (
       <Modal
@@ -376,9 +473,12 @@ class DocumentListDialog extends Component {
         width={1080}
       >
         <div style={{display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12}}>
-          <Select style={{width: 200}} value={this.state.selectedCategoryId} onChange={this.handleCategoryChange}>
+          <Select style={{width: 200}} value={this.state.selectedCategoryUuid} onChange={this.handleCategoryChange}>
             {categoryOptions.map((category) => (
-              <Select.Option key={category.id} value={category.id}>
+              <Select.Option
+                key={category.category_id || category.id}
+                value={category.category_id || category.id}
+              >
                 {category.name || DEFAULT_CATEGORY_NAME}
               </Select.Option>
             ))}

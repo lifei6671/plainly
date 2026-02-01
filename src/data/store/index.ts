@@ -5,6 +5,7 @@ import {DataStoreMode, IDataStore} from "./IDataStore";
 let cachedStore: IDataStore | null = null;
 let cachedMode: DataStoreMode = "remote";
 let cachedUserId: number | null = null;
+const SESSION_FLAG_COOKIE = "plainly_session";
 
 const resolveDefaultMode = (): DataStoreMode => {
   // 前端 vite 环境变量
@@ -31,15 +32,6 @@ const resolveDefaultUserId = (): number => {
     if (typeof globalId === "number" && Number.isFinite(globalId)) {
       return globalId;
     }
-    if (window.localStorage) {
-      const stored = window.localStorage.getItem("plainly_user_id");
-      if (stored) {
-        const parsed = Number(stored);
-        if (!Number.isNaN(parsed) && parsed >= 0) {
-          return parsed;
-        }
-      }
-    }
     if ((window as any).__DATA_STORE_USER__) {
       const maybeId = Number((window as any).__DATA_STORE_USER__?.id);
       if (!Number.isNaN(maybeId)) return maybeId;
@@ -62,11 +54,17 @@ const resolveDefaultUserId = (): number => {
   return 0;
 };
 
+const hasSessionCookie = (): boolean => {
+  if (typeof document === "undefined") return false;
+  return document.cookie.split(";").some((item) => item.trim().startsWith(`${SESSION_FLAG_COOKIE}=`));
+};
+
 export function getDataStore(mode?: DataStoreMode, userId?: number): IDataStore {
   const resolvedUserId = userId ?? resolveDefaultUserId();
   const desiredMode = mode || resolveDefaultMode();
+  const sessionActive = hasSessionCookie();
   const shouldForceBrowser =
-    (desiredMode === "remote" && (!resolvedUserId || resolvedUserId <= 0)) ||
+    (desiredMode === "remote" && (!resolvedUserId || resolvedUserId <= 0) && !sessionActive) ||
     (desiredMode === "node" && (!resolvedUserId || resolvedUserId <= 0));
   const effectiveMode = shouldForceBrowser ? "browser" : desiredMode;
 

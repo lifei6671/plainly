@@ -1,13 +1,8 @@
 import {IDataStore} from "../IDataStore";
-import {
-  Category,
-  CategoryWithCount,
-  DocumentMeta,
-  NewDocumentPayload,
-  UpdateDocumentMetaInput,
-} from "../types";
+import {Category, CategoryWithCount, DocumentMeta, NewDocumentPayload, UpdateDocumentMetaInput} from "../types";
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
+const SESSION_FLAG_COOKIE = "plainly_session";
 
 export class RemoteDataStore implements IDataStore {
   constructor(private baseUrl: string = "/api", private userId: number = 0) {}
@@ -16,7 +11,28 @@ export class RemoteDataStore implements IDataStore {
     this.userId = uid;
   }
 
-  private async request<T>(path: string, method: HttpMethod = "GET", body?: unknown): Promise<T> {
+  private hasSessionCookie(): boolean {
+    if (typeof document === "undefined") return false;
+    return document.cookie.split(";").some((item) => item.trim().startsWith(`${SESSION_FLAG_COOKIE}=`));
+  }
+
+  private async refreshSession(): Promise<boolean> {
+    if (!this.hasSessionCookie()) return false;
+    const response = await fetch(`${this.baseUrl}/auth/refresh`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      credentials: "include",
+    });
+    const payload = (await response.json().catch(() => null)) as {errcode?: number};
+    return response.ok && (!payload || payload.errcode === 0);
+  }
+
+  private async request<T>(
+    path: string,
+    method: HttpMethod = "GET",
+    body?: unknown,
+    retry = true,
+  ): Promise<T> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -29,6 +45,12 @@ export class RemoteDataStore implements IDataStore {
       credentials: "include",
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
+    if (response.status === 401 && retry && this.hasSessionCookie()) {
+      const refreshed = await this.refreshSession();
+      if (refreshed) {
+        return this.request<T>(path, method, body, false);
+      }
+    }
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       throw new Error(`Request failed: ${response.status} ${text}`);
@@ -52,31 +74,39 @@ export class RemoteDataStore implements IDataStore {
     return this.request<CategoryWithCount[]>("/categories/count");
   }
 
-  createCategory(name: string): Promise<Category> {
-    return this.request<Category>("/categories", "POST", {name});
+  createCategory(
+    name: string,
+    options?: {category_id?: string; source?: "local" | "remote"; version?: number},
+  ): Promise<Category> {
+    return this.request<Category>("/categories", "POST", {
+      name,
+      category_id: options?.category_id,
+      source: options?.source,
+      version: options?.version,
+    });
   }
 
-  renameCategory(id: number, name: string): Promise<void> {
-    return this.request<void>(`/categories/${id}`, "PATCH", {name});
+  renameCategory(categoryId: string, name: string): Promise<void> {
+    return this.request<void>(`/categories/${encodeURIComponent(categoryId)}`, "PATCH", {name});
   }
 
-  deleteCategory(id: number, options?: {reassignTo?: number}): Promise<void> {
+  deleteCategory(categoryId: string, options?: {reassignTo?: string}): Promise<void> {
     const params = new URLSearchParams();
     if (options?.reassignTo != null) params.set("reassignTo", String(options.reassignTo));
-    return this.request<void>(`/categories/${id}?${params.toString()}`, "DELETE");
+    return this.request<void>(`/categories/${encodeURIComponent(categoryId)}?${params.toString()}`, "DELETE");
   }
 
-  createDocument(meta: NewDocumentPayload, content: string): Promise<number> {
+  createDocument(meta: NewDocumentPayload, content: string): Promise<DocumentMeta> {
     const payload = {...meta, uid: meta.uid ?? (this.userId > 0 ? this.userId : undefined)};
-    return this.request<number>("/documents", "POST", {meta: payload, content});
+    return this.request<DocumentMeta>("/documents", "POST", {meta: payload, content});
   }
 
-  getDocumentMeta(documentId: number): Promise<DocumentMeta | null> {
-    return this.request<DocumentMeta | null>(`/documents/${documentId}/meta`);
+  getDocumentMeta(documentId: string): Promise<DocumentMeta | null> {
+    return this.request<DocumentMeta | null>(`/documents/${encodeURIComponent(documentId)}/meta`);
   }
 
-  updateDocumentMeta(documentId: number, updates: UpdateDocumentMetaInput): Promise<void> {
-    return this.request<void>(`/documents/${documentId}/meta`, "PATCH", updates);
+  updateDocumentMeta(documentId: string, updates: UpdateDocumentMetaInput): Promise<void> {
+    return this.request<void>(`/documents/${encodeURIComponent(documentId)}/meta`, "PATCH", updates);
   }
 
   listDocumentsPage(
@@ -92,19 +122,31 @@ export class RemoteDataStore implements IDataStore {
   }
 
   ensureDocumentCharCount(meta: DocumentMeta): Promise<DocumentMeta> {
-    return this.request<DocumentMeta>(`/documents/${meta.document_id}/charcount`, "POST", meta);
+    return this.request<DocumentMeta>(`/documents/${encodeURIComponent(meta.document_id)}/charcount`, "POST", meta);
   }
 
-  getDocumentContent(documentId: number): Promise<string> {
-    return this.request<string>(`/documents/${documentId}/content`);
+  getDocumentContent(documentId: string): Promise<string> {
+    return this.request<string>(`/documents/${encodeURIComponent(documentId)}/content`);
   }
 
-  saveDocumentContent(documentId: number, content: string, updatedAt?: number | string | Date): Promise<void> {
-    return this.request<void>(`/documents/${documentId}/content`, "PUT", {content, updatedAt});
+  saveDocumentContent(documentId: string, content: string, updatedAt?: number | string | Date): Promise<void> {
+    return this.request<void>(`/documents/${encodeURIComponent(documentId)}/content`, "PUT", {content, updatedAt});
   }
 
-  deleteDocument(documentId: number): Promise<void> {
-    return this.request<void>(`/documents/${documentId}`, "DELETE");
+  deleteDocument(documentId: string): Promise<void> {
+    return this.request<void>(`/documents/${encodeURIComponent(documentId)}`, "DELETE");
+  }
+
+  batchCreateCategories(
+    items: Array<{name: string; category_id?: string; source?: "local" | "remote"; version?: number}>,
+  ): Promise<{items: Array<{client_id?: string; category?: Category; error?: string}>}> {
+    return this.request(`/categories/batch`, "POST", {items});
+  }
+
+  batchCreateDocuments(
+    items: Array<{meta: NewDocumentPayload; content: string}>,
+  ): Promise<{items: Array<{client_id?: string; document?: DocumentMeta; error?: string}>}> {
+    return this.request(`/documents/batch`, "POST", {items});
   }
 
   getConfig<T = unknown>(key: string, fallback?: T): Promise<T | null> {

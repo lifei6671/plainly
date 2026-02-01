@@ -3,7 +3,8 @@ import {observer, inject} from "mobx-react";
 import {Modal, Input, Form, Select, message} from "antd";
 import {markIndexDirty, scheduleIndexRebuild} from "../../search";
 import {getDataStore} from "../../data/store";
-import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
+import {BrowserDataStore} from "../../data/store/browser/BrowserDataStore";
+import {DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_UUID} from "../../utils/constant";
 
 @inject("dialog")
 @inject("content")
@@ -16,7 +17,7 @@ class NewFileDialog extends Component {
     this.state = {
       name: "",
       categories: [],
-      categoryId: DEFAULT_CATEGORY_ID,
+      categoryUuid: DEFAULT_CATEGORY_UUID,
     };
   }
 
@@ -30,7 +31,7 @@ class NewFileDialog extends Component {
   componentDidUpdate() {
     const isOpen = this.props.dialog.isNewFileOpen;
     if (isOpen && !this.wasOpen) {
-      this.setState({categoryId: DEFAULT_CATEGORY_ID});
+      this.setState({categoryUuid: DEFAULT_CATEGORY_UUID});
       this.loadCategories();
     }
     this.wasOpen = isOpen;
@@ -42,9 +43,37 @@ class NewFileDialog extends Component {
     return getDataStore(undefined, Number(uid) || 0);
   }
 
+  resolveDataStoreMode() {
+    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
+      return import.meta.env.VITE_DATA_STORE;
+    }
+    if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
+      return window.__DATA_STORE_MODE__;
+    }
+    if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
+      return process.env.DATA_STORE_MODE;
+    }
+    return "browser";
+  }
+
+  getRuntimeUserId() {
+    if (typeof window === "undefined") return 0;
+    return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
+  }
+
+  shouldCacheRemote() {
+    return this.resolveDataStoreMode() === "remote" && this.getRuntimeUserId() > 0;
+  }
+
+  getCacheStore() {
+    if (!this.shouldCacheRemote()) return null;
+    return new BrowserDataStore(this.getRuntimeUserId());
+  }
+
   loadCategories = async () => {
     try {
       const categories = await this.getDataStore().listCategories();
+      await this.cacheCategories(categories);
       this.setState({categories});
       return categories;
     } catch (e) {
@@ -90,26 +119,27 @@ class NewFileDialog extends Component {
 
     try {
       const now = new Date();
-      const categoryId = this.state.categoryId || DEFAULT_CATEGORY_ID;
-      const documentId = await this.getDataStore().createDocument(
+      const categoryUuid = this.state.categoryUuid || DEFAULT_CATEGORY_UUID;
+      const created = await this.getDataStore().createDocument(
         {
           name: fileName,
           charCount: 0,
-          category: categoryId,
+          category_id: categoryUuid,
           createdAt: now,
           updatedAt: now,
         },
         "",
       );
-      if (documentId != null) {
-        this.props.content.setDocumentId(documentId);
+      if (created && created.document_id) {
+        this.props.content.setDocumentUuid(created.document_id);
       }
-      const category = this.state.categories.find((item) => item.id === categoryId);
-      this.props.content.setDocumentCategory(categoryId, category ? category.name : DEFAULT_CATEGORY_NAME);
+      const category = this.state.categories.find((item) => item.category_id === categoryUuid);
+      this.props.content.setDocumentCategory(categoryUuid, category ? category.name : DEFAULT_CATEGORY_NAME);
       this.props.content.setDocumentName(fileName);
       this.props.content.setDocumentUpdatedAt(now);
       this.clearEditor();
-      this.setState({name: "", categoryId: DEFAULT_CATEGORY_ID});
+      await this.cacheCreatedDocument(created);
+      this.setState({name: "", categoryUuid: DEFAULT_CATEGORY_UUID});
       this.props.dialog.setNewFileOpen(false);
       message.success("新建文件成功！");
       try {
@@ -125,7 +155,7 @@ class NewFileDialog extends Component {
   };
 
   handleCancel = () => {
-    this.setState({name: "", categoryId: DEFAULT_CATEGORY_ID});
+    this.setState({name: "", categoryUuid: DEFAULT_CATEGORY_UUID});
     this.props.dialog.setNewFileOpen(false);
   };
 
@@ -149,12 +179,12 @@ class NewFileDialog extends Component {
         </Form.Item>
         <Form.Item label="目录">
           <Select
-            value={this.state.categoryId}
-            onChange={(value) => this.setState({categoryId: value})}
+            value={this.state.categoryUuid}
+            onChange={(value) => this.setState({categoryUuid: value})}
             placeholder="请选择目录"
           >
             {this.state.categories.map((category) => (
-              <Select.Option key={category.id} value={category.id}>
+              <Select.Option key={category.category_id || category.id} value={category.category_id || category.id}>
                 {category.name || DEFAULT_CATEGORY_NAME}
               </Select.Option>
             ))}
@@ -163,6 +193,35 @@ class NewFileDialog extends Component {
       </Modal>
     );
   }
+
+  cacheCreatedDocument = async (created) => {
+    if (!created || !created.document_id) return;
+    if (!this.shouldCacheRemote()) return;
+    const cache = this.getCacheStore();
+    if (!cache) return;
+    await cache.init();
+    await cache.upsertDocumentSnapshot({
+      ...created,
+      source: "remote",
+      uid: this.getRuntimeUserId(),
+    });
+  };
+
+  cacheCategories = async (categories) => {
+    if (!this.shouldCacheRemote()) return;
+    const cache = this.getCacheStore();
+    if (!cache) return;
+    await cache.init();
+    await Promise.all(
+      categories.map((category) =>
+        cache.upsertCategorySnapshot({
+          ...category,
+          source: "remote",
+          uid: this.getRuntimeUserId(),
+        }),
+      ),
+    );
+  };
 }
 
 export default NewFileDialog;

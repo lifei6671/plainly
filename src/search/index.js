@@ -17,6 +17,53 @@ const IDLE_TIMEOUT_MS = 2000;
 let rebuildScheduled = false;
 let rebuildPromise = null;
 
+function resolveDataStoreMode() {
+  if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
+    return import.meta.env.VITE_DATA_STORE;
+  }
+  if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
+    return window.__DATA_STORE_MODE__;
+  }
+  if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
+    return process.env.DATA_STORE_MODE;
+  }
+  return "browser";
+}
+
+function getRuntimeUserId() {
+  if (typeof window === "undefined") return 0;
+  return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
+}
+
+function normalizeUid(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function normalizeSource(value, uid) {
+  if (value === "remote" || value === "local") return value;
+  return uid > 0 ? "remote" : "local";
+}
+
+function resolveScope() {
+  const mode = resolveDataStoreMode();
+  const uid = getRuntimeUserId();
+  if (mode === "remote" && uid > 0) {
+    return {uid, source: "remote"};
+  }
+  return {uid: 0, source: "local"};
+}
+
+function matchesScope(item, scope) {
+  const uid = normalizeUid(item?.uid);
+  const source = normalizeSource(item?.source, uid);
+  return uid === scope.uid && source === scope.source;
+}
+
 /**
  * 有限并发 map：每批并发 limit 个任务
  * @template T,R
@@ -79,8 +126,10 @@ export function scheduleIndexRebuild() {
   const run = async () => {
     rebuildScheduled = false;
     try {
+      const jiebaReady = await ensureJiebaReady();
+      const mode = jiebaReady ? "jieba" : "fallback";
       if (!(await isIndexDirty())) return;
-      await rebuildIndexNow();
+      await rebuildIndexNow(mode);
     } catch (e) {
       console.error(e);
     }
@@ -94,14 +143,15 @@ export function scheduleIndexRebuild() {
   }
 }
 
-async function getDocsVersionFast() {
+async function getDocsVersionFast(mode = "jieba") {
   const db = await openArticlesDb();
-  if (!db) return "0:0";
+  if (!db) return `${INDEX_SCHEMA_VERSION}:${mode}:0:0`;
 
   const hasMeta = db.objectStoreNames.contains(ARTICLE_META_STORE);
   const hasLegacy = db.objectStoreNames.contains(LEGACY_ARTICLES_STORE);
-  if (!hasMeta && !hasLegacy) return "0:0";
+  if (!hasMeta && !hasLegacy) return `${INDEX_SCHEMA_VERSION}:${mode}:0:0`;
 
+  const scope = resolveScope();
   const metaItems = hasMeta ? await db.getAll(ARTICLE_META_STORE) : [];
   const legacyItems = hasLegacy ? await db.getAll(LEGACY_ARTICLES_STORE) : [];
 
@@ -110,7 +160,8 @@ async function getDocsVersionFast() {
   let count = 0;
 
   for (const item of metaItems) {
-    const id = item?.document_id ?? item?.id;
+    if (!matchesScope(item, scope)) continue;
+    const id = item?.document_id ?? item?.document_id ?? item?.id;
     if (id == null) continue;
     const key = String(id);
     if (seen.has(key)) continue;
@@ -119,17 +170,19 @@ async function getDocsVersionFast() {
     maxUpdatedAt = Math.max(maxUpdatedAt, toTimestamp(item.updatedAt || item.createdAt));
   }
 
-  for (const item of legacyItems) {
-    const id = item?.document_id ?? item?.id;
-    if (id == null) continue;
-    const key = String(id);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    count += 1;
-    maxUpdatedAt = Math.max(maxUpdatedAt, toTimestamp(item.updatedAt || item.createdAt));
+  if (scope.uid === 0 && scope.source === "local") {
+    for (const item of legacyItems) {
+      const id = item?.document_id ?? item?.id;
+      if (id == null) continue;
+      const key = String(id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      count += 1;
+      maxUpdatedAt = Math.max(maxUpdatedAt, toTimestamp(item.updatedAt || item.createdAt));
+    }
   }
 
-  return `${INDEX_SCHEMA_VERSION}:${maxUpdatedAt}:${count}`;
+  return `${INDEX_SCHEMA_VERSION}:${mode}:${maxUpdatedAt}:${count}`;
 }
 
 async function buildRawDocsFromArticles() {
@@ -140,32 +193,37 @@ async function buildRawDocsFromArticles() {
   const hasContent = db.objectStoreNames.contains(ARTICLE_CONTENT_STORE);
   const hasLegacy = db.objectStoreNames.contains(LEGACY_ARTICLES_STORE);
 
+  const scope = resolveScope();
   const metaItems = hasMeta ? await db.getAll(ARTICLE_META_STORE) : [];
   const contentItems = hasContent ? await db.getAll(ARTICLE_CONTENT_STORE) : [];
   const legacyItems = hasLegacy ? await db.getAll(LEGACY_ARTICLES_STORE) : [];
 
   const contentById = new Map();
   contentItems.forEach((item) => {
-    if (item && item.document_id != null) {
-      contentById.set(String(item.document_id), item.content || "");
-    }
+    if (!matchesScope(item, scope)) return;
+    const id = item?.document_id ?? item?.document_id ?? item?.id;
+    if (id == null) return;
+    contentById.set(String(id), item.content || "");
   });
 
   const legacyById = new Map();
-  legacyItems.forEach((item) => {
-    const id = item?.document_id ?? item?.id;
-    if (id == null) return;
-    const key = String(id);
-    if (!legacyById.has(key) && item?.content != null) {
-      legacyById.set(key, item.content);
-    }
-  });
+  if (scope.uid === 0 && scope.source === "local") {
+    legacyItems.forEach((item) => {
+      const id = item?.document_id ?? item?.id;
+      if (id == null) return;
+      const key = String(id);
+      if (!legacyById.has(key) && item?.content != null) {
+        legacyById.set(key, item.content);
+      }
+    });
+  }
 
   const docs = [];
   const seen = new Set();
 
   for (const meta of metaItems) {
-    const id = meta?.document_id ?? meta?.id;
+    if (!matchesScope(meta, scope)) continue;
+    const id = meta?.document_id ?? meta?.document_id ?? meta?.id;
     if (id == null) continue;
     const key = String(id);
     if (seen.has(key)) continue;
@@ -178,18 +236,20 @@ async function buildRawDocsFromArticles() {
     });
   }
 
-  for (const legacy of legacyItems) {
-    const id = legacy?.document_id ?? legacy?.id;
-    if (id == null) continue;
-    const key = String(id);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    docs.push({
-      id: key,
-      title: legacy.name || "",
-      markdown: legacy.content || "",
-      updatedAt: toTimestamp(legacy.updatedAt || legacy.createdAt),
-    });
+  if (scope.uid === 0 && scope.source === "local") {
+    for (const legacy of legacyItems) {
+      const id = legacy?.document_id ?? legacy?.id;
+      if (id == null) continue;
+      const key = String(id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      docs.push({
+        id: key,
+        title: legacy.name || "",
+        markdown: legacy.content || "",
+        updatedAt: toTimestamp(legacy.updatedAt || legacy.createdAt),
+      });
+    }
   }
 
   return docs;
@@ -201,15 +261,16 @@ async function buildRawDocsFromArticles() {
  * - 未命中：Markdown->Text(无代码) + 建索引 + 写入 IndexedDB
  *
  * @param {{id:string,title?:string,markdown?:string,updatedAt?:number}[]} rawDocs
- * @param {{concurrency?:number, persistDocs?:boolean, forceRebuild?:boolean}} [opts]
+ * @param {{concurrency?:number, persistDocs?:boolean, forceRebuild?:boolean, mode?:string}} [opts]
  * @returns {Promise<{idx: any, version: string, fromCache: boolean}>}
  */
 export async function initSearch(rawDocs, opts = {}) {
   const concurrency = Math.max(1, opts.concurrency || 4); // iOS 建议 2~4；桌面 6~10
   const persistDocs = opts.persistDocs !== false; // 默认 true，便于回查/做 snippet
   const forceRebuild = opts.forceRebuild === true;
+  const mode = opts.mode || "jieba";
 
-  const version = calcVersion(rawDocs);
+  const version = calcVersion(rawDocs, mode);
 
   console.log("尝试初始化 Lunr 索引文件");
 
@@ -279,13 +340,13 @@ export async function getDocById(id) {
  * 重建索引
  * @returns {Promise<{idx: Index, version: string, fromCache: boolean}|{idx: Index|*, version: string, fromCache: boolean}>}
  */
-export async function rebuildIndexNow() {
+export async function rebuildIndexNow(mode = "jieba") {
   if (rebuildPromise) return rebuildPromise;
 
   rebuildPromise = (async () => {
     const dirtyToken = await getDirtyToken();
     const rawDocs = await buildRawDocsFromArticles();
-    const result = await initSearch(rawDocs, {concurrency: 12, forceRebuild: true});
+    const result = await initSearch(rawDocs, {concurrency: 12, forceRebuild: true, mode});
 
     const latestToken = await getDirtyToken();
     if (latestToken === dirtyToken) {
@@ -308,9 +369,10 @@ export async function rebuildIndexNow() {
  * @returns {Promise<Index|Index|*>}
  */
 export async function ensureIndexReady() {
-  await ensureJiebaReady();
+  const jiebaReady = await ensureJiebaReady();
+  const mode = jiebaReady ? "jieba" : "fallback";
   const dirty = await isIndexDirty();
-  const version = await getDocsVersionFast();
+  const version = await getDocsVersionFast(mode);
 
   if (!dirty) {
     const cached = await loadIndexIfFresh(version);
@@ -325,6 +387,6 @@ export async function ensureIndexReady() {
     }
   }
 
-  const {idx} = await rebuildIndexNow();
+  const {idx} = await rebuildIndexNow(mode);
   return idx;
 }

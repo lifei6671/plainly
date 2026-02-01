@@ -9,12 +9,13 @@ export const MaxLocalDocumentLength = 30;
 // export const AutoSaveInterval = 10 * 60 * 1000;
 export const AutoSaveInterval = 60 * 1000;
 
-export const getLocalDocuments = (db, DocumentID) => {
+export const getLocalDocuments = (db, DocumentUUID) => {
   try {
     const transaction = db.transaction(["customers"], "readonly");
     const store = transaction.objectStore("customers");
-    const keyRange = IDBKeyRange.only(DocumentID);
-    const index = store.index("DocumentID");
+    const useUuidIndex = store.indexNames && store.indexNames.contains("DocumentUUID");
+    const keyRange = IDBKeyRange.only(DocumentUUID);
+    const index = useUuidIndex ? store.index("DocumentUUID") : store.index("DocumentID");
     const req = index.openCursor(keyRange);
 
     return new Promise((resolve, reject) => {
@@ -37,7 +38,7 @@ export const getLocalDocuments = (db, DocumentID) => {
       };
     });
   } catch (e) {
-    console.log("未知错误", DocumentID);
+    console.log("未知错误", DocumentUUID);
     return Promise.reject(e);
   }
 };

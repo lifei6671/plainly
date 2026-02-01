@@ -2,9 +2,11 @@ import {observable, action} from "mobx";
 import {
   CONTENT,
   DOCUMENT_ID,
+  DOCUMENT_UUID,
   DOCUMENT_NAME,
   DOCUMENT_UPDATED_AT,
   DOCUMENT_CATEGORY_ID,
+  DOCUMENT_CATEGORY_UUID,
   DOCUMENT_CATEGORY_NAME,
   STYLE,
   TEMPLATE_OPTIONS,
@@ -14,6 +16,7 @@ import {
   BASIC_THEME_ID,
   STYLE_LABELS,
   DEFAULT_CATEGORY_ID,
+  DEFAULT_CATEGORY_UUID,
   DEFAULT_CATEGORY_NAME,
 } from "../utils/constant";
 import {replaceStyle, addStyleLabel} from "../utils/helper";
@@ -29,11 +32,15 @@ class Content {
 
   @observable documentId;
 
+  @observable documentUuid;
+
   @observable documentName;
 
   @observable documentUpdatedAt;
 
   @observable documentCategoryId;
+
+  @observable documentCategoryUuid;
 
   @observable documentCategoryName;
 
@@ -50,8 +57,18 @@ class Content {
 
   @action
   setDocumentId = (documentId) => {
-    this.documentId = documentId;
-    setConfigSync(DOCUMENT_ID, String(documentId));
+    const nextValue = documentId ? String(documentId).replace(/-/g, "") : "";
+    this.documentId = nextValue;
+    setConfigSync(DOCUMENT_ID, nextValue);
+  };
+
+  @action
+  setDocumentUuid = (documentUuid) => {
+    const nextValue = documentUuid ? String(documentUuid).replace(/-/g, "") : "";
+    this.documentUuid = nextValue;
+    this.documentId = nextValue;
+    setConfigSync(DOCUMENT_ID, nextValue);
+    setConfigSync(DOCUMENT_UUID, nextValue);
   };
 
   @action
@@ -75,9 +92,18 @@ class Content {
 
   @action
   setDocumentCategoryId = (documentCategoryId) => {
-    const nextValue = documentCategoryId != null ? Number(documentCategoryId) : DEFAULT_CATEGORY_ID;
-    this.documentCategoryId = Number.isNaN(nextValue) ? DEFAULT_CATEGORY_ID : nextValue;
-    setConfigSync(DOCUMENT_CATEGORY_ID, String(this.documentCategoryId));
+    const parsed = Number(documentCategoryId);
+    this.documentCategoryId = Number.isFinite(parsed) ? parsed : DEFAULT_CATEGORY_ID;
+  };
+
+  @action
+  setDocumentCategoryUuid = (documentCategoryUuid) => {
+    const nextValue = documentCategoryUuid
+      ? String(documentCategoryUuid).replace(/-/g, "")
+      : DEFAULT_CATEGORY_UUID;
+    this.documentCategoryUuid = nextValue;
+    setConfigSync(DOCUMENT_CATEGORY_ID, String(nextValue));
+    setConfigSync(DOCUMENT_CATEGORY_UUID, String(nextValue));
   };
 
   @action
@@ -88,8 +114,20 @@ class Content {
   };
 
   @action
-  setDocumentCategory = (documentCategoryId, documentCategoryName) => {
-    this.setDocumentCategoryId(documentCategoryId);
+  setDocumentCategory = (documentCategoryUuid, documentCategoryName, documentCategoryId) => {
+    const uuidValue = documentCategoryUuid ?? DEFAULT_CATEGORY_UUID;
+    const legacyId =
+      documentCategoryId != null
+        ? documentCategoryId
+        : typeof documentCategoryUuid === "number"
+          ? documentCategoryUuid
+          : typeof documentCategoryUuid === "string" && /^\d+$/.test(documentCategoryUuid)
+            ? Number(documentCategoryUuid)
+            : null;
+    if (legacyId != null) {
+      this.setDocumentCategoryId(legacyId);
+    }
+    this.setDocumentCategoryUuid(uuidValue);
     if (documentCategoryName) {
       this.setDocumentCategoryName(documentCategoryName);
     } else if (!this.documentCategoryName) {
@@ -122,7 +160,8 @@ if (getConfigSync(CONTENT) === null) {
   setConfigSync(CONTENT, TEMPLATE.content);
 }
 if (getConfigSync(DOCUMENT_ID) === null) {
-  setConfigSync(DOCUMENT_ID, "1");
+  const legacy = getConfigSync(DOCUMENT_UUID, "");
+  setConfigSync(DOCUMENT_ID, legacy ? String(legacy).replace(/-/g, "") : "");
 }
 if (getConfigSync(DOCUMENT_NAME) === null) {
   setConfigSync(DOCUMENT_NAME, "未命名.md");
@@ -131,7 +170,11 @@ if (getConfigSync(DOCUMENT_UPDATED_AT) === null) {
   setConfigSync(DOCUMENT_UPDATED_AT, "0");
 }
 if (getConfigSync(DOCUMENT_CATEGORY_ID) === null) {
-  setConfigSync(DOCUMENT_CATEGORY_ID, String(DEFAULT_CATEGORY_ID));
+  const legacy = getConfigSync(DOCUMENT_CATEGORY_UUID, DEFAULT_CATEGORY_UUID);
+  setConfigSync(
+    DOCUMENT_CATEGORY_ID,
+    legacy ? String(legacy).replace(/-/g, "") : DEFAULT_CATEGORY_UUID,
+  );
 }
 if (getConfigSync(DOCUMENT_CATEGORY_NAME) === null) {
   setConfigSync(DOCUMENT_CATEGORY_NAME, DEFAULT_CATEGORY_NAME);
@@ -163,11 +206,17 @@ replaceStyle(BASIC_THEME_ID, TEMPLATE.basic);
 replaceStyle(MARKDOWN_THEME_ID, store.style);
 
 store.content = getConfigSync(CONTENT, TEMPLATE.content);
-store.documentId = parseInt(String(getConfigSync(DOCUMENT_ID, 1)), 10) || 1;
+const storedDocumentId =
+  String(getConfigSync(DOCUMENT_ID, "")) || String(getConfigSync(DOCUMENT_UUID, "") || "");
+store.documentId = storedDocumentId.replace(/-/g, "");
+store.documentUuid = store.documentId;
 store.documentName = getConfigSync(DOCUMENT_NAME, "未命名.md");
 store.documentUpdatedAt = parseInt(String(getConfigSync(DOCUMENT_UPDATED_AT, 0)), 10) || 0;
-store.documentCategoryId =
-  parseInt(String(getConfigSync(DOCUMENT_CATEGORY_ID, DEFAULT_CATEGORY_ID)), 10) || DEFAULT_CATEGORY_ID;
+const storedCategoryId = String(getConfigSync(DOCUMENT_CATEGORY_ID, DEFAULT_CATEGORY_UUID) || "");
+store.documentCategoryId = Number.isFinite(Number(storedCategoryId))
+  ? Number(storedCategoryId)
+  : DEFAULT_CATEGORY_ID;
+store.documentCategoryUuid = (storedCategoryId || DEFAULT_CATEGORY_UUID).replace(/-/g, "");
 store.documentCategoryName = getConfigSync(DOCUMENT_CATEGORY_NAME, DEFAULT_CATEGORY_NAME);
 
 export default store;

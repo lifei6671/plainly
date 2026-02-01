@@ -8,9 +8,27 @@ import debouce from "lodash.debounce";
 import {markIndexDirty, scheduleIndexRebuild} from "../../search";
 import {getDataStore} from "../../data/store";
 import {countVisibleChars} from "../../utils/helper";
-import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../../utils/constant";
+import {DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_ID} from "../../utils/constant";
 
-const DocumentID = 1;
+const DocumentUUID = "";
+
+const resolveDataStoreMode = () => {
+  if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
+    return import.meta.env.VITE_DATA_STORE;
+  }
+  if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
+    return window.__DATA_STORE_MODE__;
+  }
+  if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
+    return process.env.DATA_STORE_MODE;
+  }
+  return "browser";
+};
+
+const getRuntimeUserId = () => {
+  if (typeof window === "undefined") return 0;
+  return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
+};
 
 @inject("dialog")
 @inject("content")
@@ -29,29 +47,19 @@ class HistoryDialog extends Component {
     };
   }
 
-  resolveDataStoreMode() {
-    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
-      return import.meta.env.VITE_DATA_STORE;
-    }
-    if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
-      return window.__DATA_STORE_MODE__;
-    }
-    if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
-      return process.env.DATA_STORE_MODE;
-    }
-    return "browser";
-  }
-
-  getRuntimeUserId = () => {
-    if (typeof window === "undefined") return 0;
-    return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
-  };
-
   getRemoteStore = () => {
-    if (this.resolveDataStoreMode() !== "remote") return null;
-    const uid = this.getRuntimeUserId();
+    if (resolveDataStoreMode() !== "remote") return null;
+    const uid = getRuntimeUserId();
     if (!uid) return null;
     return getDataStore("remote", Number(uid) || 0);
+  };
+
+  getHistorySource = () => {
+    const uid = getRuntimeUserId();
+    if (resolveDataStoreMode() === "remote" && uid > 0) {
+      return "remote";
+    }
+    return "local";
   };
 
   async componentDidMount() {
@@ -60,8 +68,8 @@ class HistoryDialog extends Component {
   }
 
   componentDidUpdate(prevProps) {
-    const prevDocumentId = this.getDocumentId(prevProps);
-    const currentDocumentId = this.getDocumentId();
+    const prevDocumentId = this.getDocumentUuid(prevProps);
+    const currentDocumentId = this.getDocumentUuid();
     if (prevDocumentId !== currentDocumentId && this.db) {
       if (currentDocumentId) {
         this.overrideLocalDocuments(currentDocumentId);
@@ -79,9 +87,9 @@ class HistoryDialog extends Component {
     return this.props.content.markdownEditor;
   }
 
-  getDocumentId = (props = this.props) => {
-    if (props.content && props.content.documentId != null) {
-      return props.content.documentId;
+  getDocumentUuid = (props = this.props) => {
+    if (props.content && props.content.documentUuid != null) {
+      return props.content.documentUuid;
     }
     return props.documentID;
   };
@@ -109,25 +117,29 @@ class HistoryDialog extends Component {
 
   autoSave = async (isRecent = false) => {
     const Content = this.props.content.markdownEditor.getValue();
-    const documentId = this.getDocumentId();
-    if (!documentId) {
+    const documentUuid = this.getDocumentUuid();
+    if (!documentUuid) {
       return;
     }
     if (Content.trim() !== "") {
       const now = new Date();
+      const source = this.getHistorySource();
+      const uid = getRuntimeUserId();
       const document = {
         Content,
-        DocumentID: documentId,
+        DocumentUUID: documentUuid,
         SaveTime: now,
+        Source: source,
+        Uid: uid,
       };
       const setLocalDocumentMethod = isRecent && this.state.documents.length > 0 ? setLocalDraft : setLocalDocuments;
       await setLocalDocumentMethod(this.db, this.state.documents, document);
-      await this.overrideLocalDocuments(documentId);
-      await this.saveArticleContent(documentId, Content, now);
+      await this.overrideLocalDocuments(documentUuid);
+      await this.saveArticleContent(documentUuid, Content, now);
       const remoteStore = this.getRemoteStore();
       if (remoteStore) {
         try {
-          await remoteStore.saveDocumentContent(documentId, Content, now);
+          await remoteStore.saveDocumentContent(documentUuid, Content, now);
         } catch (e) {
           console.error(e);
         }
@@ -136,8 +148,8 @@ class HistoryDialog extends Component {
     }
   };
 
-  saveArticleContent = async (documentId, content, updatedAt) => {
-    if (!documentId) {
+  saveArticleContent = async (documentUuid, content, updatedAt) => {
+    if (!documentUuid) {
       return;
     }
     if (!this.articlesDb) {
@@ -150,24 +162,36 @@ class HistoryDialog extends Component {
       const transaction = this.articlesDb.transaction(["article_meta", "article_content"], "readwrite");
       const metaStore = transaction.objectStore("article_meta");
       const contentStore = transaction.objectStore("article_content");
-      const req = metaStore.get(documentId);
-      req.onsuccess = () => {
-        const current = req.result;
-        const payload = {
-          document_id: documentId,
+      const metaIndex = metaStore.index("document_id");
+          const req = metaIndex.get(documentUuid);
+          req.onsuccess = () => {
+            const current = req.result;
+            const source = this.getHistorySource();
+            const uid = getRuntimeUserId();
+            const payload = {
+          document_id: documentUuid,
           name: (current && current.name) || this.props.content.documentName || "未命名.md",
           charCount: countVisibleChars(content || ""),
-          category:
-            current && current.category != null
-              ? current.category
-              : this.props.content.documentCategoryId || DEFAULT_CATEGORY_ID,
+          category_id:
+            current && current.category_id != null
+              ? current.category_id
+              : this.props.content.documentCategoryUuid || DEFAULT_CATEGORY_UUID,
           createdAt: (current && current.createdAt) || updatedAt,
           updatedAt,
+          uid,
+          source,
+          version: current && current.version != null ? current.version + 1 : 1,
         };
-        metaStore.put(payload);
+        const resolvedId = current && current.document_id ? current.document_id : documentUuid;
+        metaStore.put({
+          ...payload,
+          document_id: resolvedId,
+        });
         contentStore.put({
-          document_id: documentId,
+          document_id: resolvedId,
           content,
+          uid,
+          source,
         });
       };
       req.onerror = (event) => reject(event);
@@ -186,33 +210,38 @@ class HistoryDialog extends Component {
     try {
       const indexDB = new IndexDB({
         name: "articles",
-        version: 4,
+        version: 6,
         storeName: "article_meta",
-        storeOptions: {keyPath: "document_id", autoIncrement: true},
+        storeOptions: {keyPath: "document_id", autoIncrement: false},
         storeInit: (objectStore, db, transaction) => {
-          if (objectStore && !objectStore.indexNames.contains("name")) {
-            objectStore.createIndex("name", "name", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("uid")) {
-            objectStore.createIndex("uid", "uid", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("createdAt")) {
-            objectStore.createIndex("createdAt", "createdAt", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("updatedAt")) {
-            objectStore.createIndex("updatedAt", "updatedAt", {unique: false});
-          }
-          if (objectStore && !objectStore.indexNames.contains("category")) {
-            objectStore.createIndex("category", "category", {unique: false});
-          }
+          const safeCreateIndex = (store, name, keyPath, options) => {
+            if (!store) return;
+            try {
+              if (!store.indexNames.contains(name)) {
+                store.createIndex(name, keyPath, options);
+              }
+            } catch (_e) {
+              // ignore duplicate/upgrade edge cases
+            }
+          };
+          safeCreateIndex(objectStore, "name", "name", {unique: false});
+          safeCreateIndex(objectStore, "document_id", "document_id", {unique: false});
+          safeCreateIndex(objectStore, "uid", "uid", {unique: false});
+          safeCreateIndex(objectStore, "source", "source", {unique: false});
+          safeCreateIndex(objectStore, "createdAt", "createdAt", {unique: false});
+          safeCreateIndex(objectStore, "updatedAt", "updatedAt", {unique: false});
+          safeCreateIndex(objectStore, "category", "category", {unique: false});
+          safeCreateIndex(objectStore, "category_id", "category_id", {unique: false});
           if (db && !db.objectStoreNames.contains("article_content")) {
             const contentStore = db.createObjectStore("article_content", {keyPath: "document_id"});
-            contentStore.createIndex("uid", "uid", {unique: false});
+            safeCreateIndex(contentStore, "uid", "uid", {unique: false});
+            safeCreateIndex(contentStore, "document_id", "document_id", {unique: false});
+            safeCreateIndex(contentStore, "source", "source", {unique: false});
           } else if (transaction && transaction.objectStoreNames.contains("article_content")) {
             const contentStore = transaction.objectStore("article_content");
-            if (contentStore && !contentStore.indexNames.contains("uid")) {
-              contentStore.createIndex("uid", "uid", {unique: false});
-            }
+            safeCreateIndex(contentStore, "uid", "uid", {unique: false});
+            safeCreateIndex(contentStore, "document_id", "document_id", {unique: false});
+            safeCreateIndex(contentStore, "source", "source", {unique: false});
           }
           if (db) {
             const shouldCreate = !db.objectStoreNames.contains("categories");
@@ -222,26 +251,23 @@ class HistoryDialog extends Component {
             } else if (transaction && transaction.objectStoreNames.contains("categories")) {
               categoriesStore = transaction.objectStore("categories");
             }
-            if (categoriesStore && !categoriesStore.indexNames.contains("uid")) {
-              categoriesStore.createIndex("uid", "uid", {unique: false});
-            }
-            if (categoriesStore && !categoriesStore.indexNames.contains("name")) {
-              categoriesStore.createIndex("name", "name", {unique: false});
-            }
-            if (categoriesStore && !categoriesStore.indexNames.contains("createdAt")) {
-              categoriesStore.createIndex("createdAt", "createdAt", {unique: false});
-            }
-            if (categoriesStore && !categoriesStore.indexNames.contains("updatedAt")) {
-              categoriesStore.createIndex("updatedAt", "updatedAt", {unique: false});
-            }
+            safeCreateIndex(categoriesStore, "uid", "uid", {unique: false});
+            safeCreateIndex(categoriesStore, "category_id", "category_id", {unique: false});
+            safeCreateIndex(categoriesStore, "source", "source", {unique: false});
+            safeCreateIndex(categoriesStore, "name", "name", {unique: false});
+            safeCreateIndex(categoriesStore, "createdAt", "createdAt", {unique: false});
+            safeCreateIndex(categoriesStore, "updatedAt", "updatedAt", {unique: false});
             if (shouldCreate && categoriesStore) {
               const now = new Date();
               categoriesStore.add({
                 id: DEFAULT_CATEGORY_ID,
+                category_id: DEFAULT_CATEGORY_UUID,
                 name: DEFAULT_CATEGORY_NAME,
                 createdAt: now,
                 updatedAt: now,
                 uid: 0,
+                source: "local",
+                version: 1,
               });
             }
           }
@@ -271,16 +297,30 @@ class HistoryDialog extends Component {
     try {
       const indexDB = new IndexDB({
         name: "mdnice-local-history",
+        version: 2,
         storeName: "customers",
         storeOptions: {keyPath: "id", autoIncrement: true},
         storeInit: (objectStore) => {
-          objectStore.createIndex("DocumentID", "DocumentID", {unique: false});
-          objectStore.createIndex("SaveTime", "SaveTime", {unique: false});
+          if (!objectStore) return;
+          const safeCreateIndex = (store, name, keyPath) => {
+            try {
+              if (!store.indexNames.contains(name)) {
+                store.createIndex(name, keyPath, {unique: false});
+              }
+            } catch (_e) {
+              // ignore duplicate/upgrade edge cases
+            }
+          };
+          safeCreateIndex(objectStore, "DocumentID", "DocumentID");
+          safeCreateIndex(objectStore, "DocumentUUID", "DocumentUUID");
+          safeCreateIndex(objectStore, "SaveTime", "SaveTime");
+          safeCreateIndex(objectStore, "Source", "Source");
+          safeCreateIndex(objectStore, "Uid", "Uid");
         },
       });
       this.db = await indexDB.init();
 
-      const documentId = this.getDocumentId();
+      const documentId = this.getDocumentUuid();
       if (this.db && documentId) {
         await this.overrideLocalDocuments(documentId);
       }
@@ -302,8 +342,8 @@ class HistoryDialog extends Component {
   }
 
   // 刷新本地历史文档
-  async overrideLocalDocuments(documentID) {
-    const localDocuments = await getLocalDocuments(this.db, +documentID);
+  async overrideLocalDocuments(documentUuid) {
+    const localDocuments = await getLocalDocuments(this.db, documentUuid);
     // console.log('refresh local',localDocuments);
     this.setState({
       documents: localDocuments,
@@ -325,7 +365,7 @@ class HistoryDialog extends Component {
           <LocalHistory
             content={this.props.content.content}
             documents={this.state.documents}
-            documentID={this.getDocumentId()}
+            documentID={this.getDocumentUuid()}
             onEdit={this.editLocalDocument}
             onCancel={this.closeDialog}
           />
@@ -338,7 +378,7 @@ class HistoryDialog extends Component {
 }
 
 HistoryDialog.defaultProps = {
-  documentID: DocumentID,
+  documentID: DocumentUUID,
 };
 
 export default HistoryDialog;

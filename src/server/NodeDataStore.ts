@@ -11,7 +11,7 @@ import {
   UserSession,
 } from "../data/store/types";
 import {IDataStore} from "../data/store/IDataStore";
-import {DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME} from "../utils/constant";
+import {DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_ID} from "../utils/constant";
 import {
   DEFAULT_USER_ID,
   SQLiteTables,
@@ -46,6 +46,22 @@ const hashPassword = (password: string, salt?: string) => {
   const actualSalt = salt || crypto.randomBytes(16).toString("hex");
   const hash = crypto.pbkdf2Sync(password, actualSalt, 10000, 64, "sha512").toString("hex");
   return {hash, salt: actualSalt};
+};
+
+const generateUuid = () => {
+  if (typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replace(/-/g, "");
+  }
+  const buf = crypto.randomBytes(16);
+  // RFC4122 v4
+  buf[6] = (buf[6] & 0x0f) | 0x40;
+  buf[8] = (buf[8] & 0x3f) | 0x80;
+  return buf.toString("hex");
+};
+
+const normalizeUuid = (value?: string | null): string => {
+  if (!value) return "";
+  return String(value).trim().replace(/-/g, "");
 };
 
 export class NodeDataStore implements IDataStore {
@@ -130,10 +146,18 @@ export class NodeDataStore implements IDataStore {
     }
     const tx = this.db.transaction(() => {
       this.db.exec(SQLiteDDL.categories.replace(SQLiteTables.categories, `${SQLiteTables.categories}_new`));
-      this.db.exec(`
-        INSERT OR IGNORE INTO ${SQLiteTables.categories}_new (user_id, id, name, created_at, updated_at)
-        SELECT ${MIGRATION_USER_ID} as user_id, id, name, created_at, updated_at FROM ${SQLiteTables.categories};
-      `);
+      const rows = this.db
+        .prepare(`SELECT id, name, created_at, updated_at FROM ${SQLiteTables.categories}`)
+        .all() as {id: number; name: string; created_at: number; updated_at: number}[];
+      const insert = this.db.prepare(
+        `INSERT OR IGNORE INTO ${SQLiteTables.categories}_new
+         (user_id, id, category_id, name, created_at, updated_at, source, version)
+         VALUES (?, ?, ?, ?, ?, ?, 'remote', 1)`,
+      );
+      rows.forEach((row) => {
+        const categoryUuid = row.id === DEFAULT_CATEGORY_ID ? DEFAULT_CATEGORY_UUID : generateUuid();
+        insert.run(MIGRATION_USER_ID, row.id, categoryUuid, row.name, row.created_at, row.updated_at);
+      });
       this.db.exec(`DROP TABLE ${SQLiteTables.categories};`);
       this.db.exec(`ALTER TABLE ${SQLiteTables.categories}_new RENAME TO ${SQLiteTables.categories};`);
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLiteTables.categories}(user_id);`);
@@ -165,11 +189,46 @@ export class NodeDataStore implements IDataStore {
     }
     const tx = this.db.transaction(() => {
       this.db.exec(SQLiteDDL.documents.replace(SQLiteTables.documents, `${SQLiteTables.documents}_new`));
-      this.db.exec(`
-        INSERT INTO ${SQLiteTables.documents}_new (id, user_id, name, category, created_at, updated_at, char_count)
-        SELECT id, ${MIGRATION_USER_ID} as user_id, name, category, created_at, updated_at, char_count
-        FROM ${SQLiteTables.documents};
-      `);
+      const categoryRows = this.db
+        .prepare(`SELECT id, category_id FROM ${SQLiteTables.categories}`)
+        .all() as {id: number; category_id: string}[];
+      const categoryMap = new Map<number, string>();
+      categoryRows.forEach((row) => {
+        if (row && row.id != null && row.category_id) {
+          categoryMap.set(row.id, row.category_id);
+        }
+      });
+      const rows = this.db
+        .prepare(`SELECT id, name, category, created_at, updated_at, char_count FROM ${SQLiteTables.documents}`)
+        .all() as {
+        id: number;
+        name: string;
+        category: number;
+        created_at: number;
+        updated_at: number;
+        char_count?: number | null;
+      }[];
+      const insert = this.db.prepare(
+        `INSERT INTO ${SQLiteTables.documents}_new
+         (id, user_id, document_id, name, category, category_id, created_at, updated_at, char_count, source, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'remote', 1)`,
+      );
+      rows.forEach((row) => {
+        const categoryId = Number(row.category ?? DEFAULT_CATEGORY_ID);
+        const normalizedCategoryId = Number.isFinite(categoryId) ? categoryId : DEFAULT_CATEGORY_ID;
+        const categoryUuid = categoryMap.get(normalizedCategoryId) || DEFAULT_CATEGORY_UUID;
+        insert.run(
+          row.id,
+          MIGRATION_USER_ID,
+          generateUuid(),
+          row.name,
+          normalizedCategoryId,
+          categoryUuid,
+          row.created_at,
+          row.updated_at,
+          row.char_count ?? null,
+        );
+      });
       this.db.exec(`DROP TABLE ${SQLiteTables.documents};`);
       this.db.exec(`ALTER TABLE ${SQLiteTables.documents}_new RENAME TO ${SQLiteTables.documents};`);
       this.db.exec(`CREATE INDEX IF NOT EXISTS idx_documents_user ON ${SQLiteTables.documents}(user_id);`);
@@ -177,22 +236,150 @@ export class NodeDataStore implements IDataStore {
     tx();
   }
 
+  private migrateCategoryIds() {
+    let info = this.tableInfo(SQLiteTables.categories);
+    if (info.length === 0) return;
+    const hasCategoryId = info.some((c) => c.name === "category_id");
+    const hasLegacyUuid = info.some((c) => c.name === "category_uuid");
+    if (!hasCategoryId && hasLegacyUuid) {
+      try {
+        this.db.exec(`ALTER TABLE ${SQLiteTables.categories} RENAME COLUMN category_uuid TO category_id;`);
+      } catch (_e) {
+        // ignore
+      }
+    }
+    info = this.tableInfo(SQLiteTables.categories);
+    const hasCategoryIdNow = info.some((c) => c.name === "category_id");
+    if (!hasCategoryIdNow) {
+      this.db.exec(`ALTER TABLE ${SQLiteTables.categories} ADD COLUMN category_id TEXT;`);
+    }
+    const hasSource = info.some((c) => c.name === "source");
+    const hasVersion = info.some((c) => c.name === "version");
+    if (!hasSource) {
+      this.db.exec(`ALTER TABLE ${SQLiteTables.categories} ADD COLUMN source TEXT NOT NULL DEFAULT 'remote';`);
+    }
+    if (!hasVersion) {
+      this.db.exec(`ALTER TABLE ${SQLiteTables.categories} ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`);
+    }
+    const rows = this.db
+      .prepare(`SELECT id, user_id, category_id FROM ${SQLiteTables.categories}`)
+      .all() as {id: number; user_id: number; category_id?: string | null}[];
+    const update = this.db.prepare(
+      `UPDATE ${SQLiteTables.categories} SET category_id = ?, source = COALESCE(source, 'remote'), version = COALESCE(version, 1) WHERE user_id = ? AND id = ?`,
+    );
+    rows.forEach((row) => {
+      const current = normalizeUuid(row.category_id || "");
+      if (!current) {
+        const nextUuid = row.id === DEFAULT_CATEGORY_ID ? DEFAULT_CATEGORY_UUID : generateUuid();
+        update.run(nextUuid, row.user_id, row.id);
+      } else if (row.category_id !== current) {
+        update.run(current, row.user_id, row.id);
+      }
+    });
+    this.db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_user_id ON ${SQLiteTables.categories}(user_id, category_id);`,
+    );
+  }
+
+  private migrateDocumentIds() {
+    let info = this.tableInfo(SQLiteTables.documents);
+    if (info.length === 0) return;
+    const hasDocumentId = info.some((c) => c.name === "document_id");
+    const hasLegacyDocUuid = info.some((c) => c.name === "document_uuid");
+    if (!hasDocumentId && hasLegacyDocUuid) {
+      try {
+        this.db.exec(`ALTER TABLE ${SQLiteTables.documents} RENAME COLUMN document_uuid TO document_id;`);
+      } catch (_e) {
+        // ignore
+      }
+    }
+    info = this.tableInfo(SQLiteTables.documents);
+    const hasDocumentIdNow = info.some((c) => c.name === "document_id");
+    if (!hasDocumentIdNow) {
+      this.db.exec(`ALTER TABLE ${SQLiteTables.documents} ADD COLUMN document_id TEXT;`);
+    }
+    const hasCategoryId = info.some((c) => c.name === "category_id");
+    const hasLegacyCatUuid = info.some((c) => c.name === "category_uuid");
+    if (!hasCategoryId && hasLegacyCatUuid) {
+      try {
+        this.db.exec(`ALTER TABLE ${SQLiteTables.documents} RENAME COLUMN category_uuid TO category_id;`);
+      } catch (_e) {
+        // ignore
+      }
+    }
+    info = this.tableInfo(SQLiteTables.documents);
+    const hasCategoryIdNow = info.some((c) => c.name === "category_id");
+    if (!hasCategoryIdNow) {
+      this.db.exec(`ALTER TABLE ${SQLiteTables.documents} ADD COLUMN category_id TEXT;`);
+    }
+    const hasSource = info.some((c) => c.name === "source");
+    const hasVersion = info.some((c) => c.name === "version");
+    if (!hasSource) {
+      this.db.exec(`ALTER TABLE ${SQLiteTables.documents} ADD COLUMN source TEXT NOT NULL DEFAULT 'remote';`);
+    }
+    if (!hasVersion) {
+      this.db.exec(`ALTER TABLE ${SQLiteTables.documents} ADD COLUMN version INTEGER NOT NULL DEFAULT 1;`);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT d.id, d.user_id, d.document_id, d.category, d.category_id, c.category_id AS cat_uuid
+         FROM ${SQLiteTables.documents} d
+         LEFT JOIN ${SQLiteTables.categories} c
+           ON c.user_id = d.user_id AND c.id = d.category`,
+      )
+      .all() as {
+      id: number;
+      user_id: number;
+      document_id?: string | null;
+      category?: number | null;
+      category_id?: string | null;
+      cat_uuid?: string | null;
+    }[];
+    const update = this.db.prepare(
+      `UPDATE ${SQLiteTables.documents}
+       SET document_id = ?, category_id = ?, source = COALESCE(source, 'remote'), version = COALESCE(version, 1)
+       WHERE user_id = ? AND id = ?`,
+    );
+    rows.forEach((row) => {
+      const docId = normalizeUuid(row.document_id || "") || generateUuid();
+      const catId =
+        normalizeUuid(row.category_id || "") ||
+        normalizeUuid(row.cat_uuid || "") ||
+        DEFAULT_CATEGORY_UUID;
+      update.run(docId, catId, row.user_id, row.id);
+    });
+    this.db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_user_id ON ${SQLiteTables.documents}(user_id, document_id);`,
+    );
+  }
+
   private migrateDocumentContent() {
-    const info = this.tableInfo(SQLiteTables.documentContent);
+    let info = this.tableInfo(SQLiteTables.documentContent);
     if (info.length === 0) {
       return;
     }
+    const hasRowId = info.some((c) => c.name === "document_row_id");
+    const hasDocId = info.some((c) => c.name === "document_id");
+    if (!hasRowId && hasDocId) {
+      try {
+        this.db.exec(`ALTER TABLE ${SQLiteTables.documentContent} RENAME COLUMN document_id TO document_row_id;`);
+      } catch (_e) {
+        // ignore
+      }
+    }
+    info = this.tableInfo(SQLiteTables.documentContent);
     const hasUserColumn = info.some((c) => c.name === "user_id");
     const pkColumns = info.filter((c) => c.pk > 0).map((c) => c.name);
-    const hasCompositePk = pkColumns.includes("user_id") && pkColumns.includes("document_id");
+    const hasCompositePk = pkColumns.includes("user_id") && pkColumns.includes("document_row_id");
     if (hasUserColumn && hasCompositePk) {
       return;
     }
+    const sourceColumn = info.some((c) => c.name === "document_row_id") ? "document_row_id" : "document_id";
     const tx = this.db.transaction(() => {
       this.db.exec(SQLiteDDL.documentContent.replace(SQLiteTables.documentContent, `${SQLiteTables.documentContent}_new`));
       this.db.exec(`
-        INSERT INTO ${SQLiteTables.documentContent}_new (document_id, user_id, content)
-        SELECT document_id, ${MIGRATION_USER_ID} as user_id, content FROM ${SQLiteTables.documentContent};
+        INSERT INTO ${SQLiteTables.documentContent}_new (document_row_id, user_id, content)
+        SELECT ${sourceColumn}, ${hasUserColumn ? "user_id" : MIGRATION_USER_ID} as user_id, content FROM ${SQLiteTables.documentContent};
       `);
       this.db.exec(`DROP TABLE ${SQLiteTables.documentContent};`);
       this.db.exec(`ALTER TABLE ${SQLiteTables.documentContent}_new RENAME TO ${SQLiteTables.documentContent};`);
@@ -235,6 +422,8 @@ export class NodeDataStore implements IDataStore {
     this.migrateDocuments();
     this.migrateDocumentContent();
     this.migrateSettings();
+    this.migrateCategoryIds();
+    this.migrateDocumentIds();
     this.db.exec(
       [
         SQLiteDDL.users,
@@ -275,16 +464,30 @@ export class NodeDataStore implements IDataStore {
   private ensureDefaultCategory() {
     if (!this.userId || this.userId <= 0) return;
     const row = this.db
-      .prepare(`SELECT id FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`)
-      .get(this.userId, DEFAULT_CATEGORY_ID);
+      .prepare(
+        `SELECT id, category_id FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`,
+      )
+      .get(this.userId, DEFAULT_CATEGORY_ID) as {id: number; category_id?: string | null} | undefined;
+    const now = Date.now();
     if (!row) {
-      const now = Date.now();
       this.db
         .prepare(
-          `INSERT OR IGNORE INTO ${SQLiteTables.categories} (user_id, id, name, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)`,
+          `INSERT OR IGNORE INTO ${SQLiteTables.categories}
+           (user_id, id, category_id, name, created_at, updated_at, source, version)
+           VALUES (?, ?, ?, ?, ?, ?, 'remote', 1)`,
         )
-        .run(this.userId, DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_NAME, now, now);
+        .run(this.userId, DEFAULT_CATEGORY_ID, DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, now, now);
+      return;
+    }
+    const normalized = normalizeUuid(row.category_id || "");
+    if (!normalized || normalized !== row.category_id) {
+      this.db
+        .prepare(
+          `UPDATE ${SQLiteTables.categories}
+           SET category_id = ?, updated_at = ?, source = COALESCE(source, 'remote'), version = COALESCE(version, 1)
+           WHERE user_id = ? AND id = ?`,
+        )
+        .run(DEFAULT_CATEGORY_UUID, now, this.userId, DEFAULT_CATEGORY_ID);
     }
   }
 
@@ -293,6 +496,44 @@ export class NodeDataStore implements IDataStore {
       .prepare(`SELECT COALESCE(MAX(id), 0) as maxId FROM ${SQLiteTables.categories} WHERE user_id = ?`)
       .get(this.userId) as {maxId?: number};
     return Number(row?.maxId ?? 0) + 1;
+  }
+
+  private isNumericKey(value: string): boolean {
+    return /^\d+$/.test(value) && value.length <= 12;
+  }
+
+  private getCategoryRowByUuid(categoryUuid: string): SQLiteCategoryRow | null {
+    const normalized = normalizeUuid(categoryUuid);
+    const row = this.db
+      .prepare(`SELECT * FROM ${SQLiteTables.categories} WHERE user_id = ? AND category_id = ?`)
+      .get(this.userId, normalized || categoryUuid) as SQLiteCategoryRow | undefined;
+    if (row) return row;
+    const candidate = normalized || categoryUuid;
+    if (this.isNumericKey(candidate)) {
+      const id = Number(candidate);
+      const byId = this.db
+        .prepare(`SELECT * FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`)
+        .get(this.userId, id) as SQLiteCategoryRow | undefined;
+      return byId || null;
+    }
+    return null;
+  }
+
+  private getDocumentRowByUuid(documentUuid: string): SQLiteDocumentRow | null {
+    const normalized = normalizeUuid(documentUuid);
+    const row = this.db
+      .prepare(`SELECT * FROM ${SQLiteTables.documents} WHERE user_id = ? AND document_id = ?`)
+      .get(this.userId, normalized || documentUuid) as SQLiteDocumentRow | undefined;
+    if (row) return row;
+    const candidate = normalized || documentUuid;
+    if (this.isNumericKey(candidate)) {
+      const id = Number(candidate);
+      const byId = this.db
+        .prepare(`SELECT * FROM ${SQLiteTables.documents} WHERE user_id = ? AND id = ?`)
+        .get(this.userId, id) as SQLiteDocumentRow | undefined;
+      return byId || null;
+    }
+    return null;
   }
 
   private mapUser(row: SQLiteUserRow): User {
@@ -496,7 +737,7 @@ export class NodeDataStore implements IDataStore {
     this.ensureDefaultCategory();
     const rows = this.db
       .prepare(
-        `SELECT id, name, created_at, updated_at, user_id FROM ${SQLiteTables.categories}
+        `SELECT id, category_id, name, created_at, updated_at, source, version, user_id FROM ${SQLiteTables.categories}
          WHERE user_id = ?
          ORDER BY created_at ASC`,
       )
@@ -509,11 +750,11 @@ export class NodeDataStore implements IDataStore {
     this.ensureDefaultCategory();
     const rows = this.db
       .prepare(
-        `SELECT c.id, c.name, c.created_at, c.updated_at, c.user_id, COUNT(d.id) as count
+        `SELECT c.id, c.category_id, c.name, c.created_at, c.updated_at, c.source, c.version, c.user_id, COUNT(d.id) as count
          FROM ${SQLiteTables.categories} c
          LEFT JOIN ${SQLiteTables.documents} d
            ON d.category = c.id AND d.user_id = c.user_id
-         WHERE c.user_id = ?
+        WHERE c.user_id = ?
          GROUP BY c.id, c.user_id
          ORDER BY c.created_at ASC`,
       )
@@ -521,112 +762,225 @@ export class NodeDataStore implements IDataStore {
     return rows.map((r) => ({...mapSqlCategory(r as SQLiteCategoryRow), count: Number(r.count)}));
   }
 
-  async createCategory(name: string): Promise<Category> {
+  async createCategory(
+    name: string,
+    options?: {category_id?: string; source?: "local" | "remote"; version?: number},
+  ): Promise<Category> {
     this.ensureUserExists();
+    const trimmed = String(name || "").trim();
+    if (!trimmed) {
+      throw new Error("category name required");
+    }
+    const existingByName = this.db
+      .prepare(`SELECT * FROM ${SQLiteTables.categories} WHERE user_id = ? AND name = ?`)
+      .get(this.userId, trimmed) as SQLiteCategoryRow | undefined;
+    if (existingByName) {
+      return mapSqlCategory(existingByName);
+    }
     const now = Date.now();
     const id = this.nextCategoryId();
+    let categoryUuid = normalizeUuid(options?.category_id ? String(options.category_id).trim() : "");
+    if (!categoryUuid) {
+      categoryUuid = generateUuid();
+    }
+    const existingByUuid = this.db
+      .prepare(`SELECT * FROM ${SQLiteTables.categories} WHERE user_id = ? AND category_id = ?`)
+      .get(this.userId, categoryUuid) as SQLiteCategoryRow | undefined;
+    if (existingByUuid) {
+      categoryUuid = generateUuid();
+    }
+    const source = options?.source || "remote";
+    const version = options?.version ?? 1;
     this.db
       .prepare(
-        `INSERT INTO ${SQLiteTables.categories} (user_id, id, name, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO ${SQLiteTables.categories} (user_id, id, category_id, name, created_at, updated_at, source, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(this.userId, id, name, now, now);
-    return {id, name, createdAt: now, updatedAt: now, uid: this.userId};
+      .run(this.userId, id, categoryUuid, trimmed, now, now, source, version);
+    return {
+      id,
+      category_id: categoryUuid,
+      name: trimmed,
+      createdAt: now,
+      updatedAt: now,
+      source,
+      version,
+      uid: this.userId,
+    };
   }
 
-  async renameCategory(id: number, name: string): Promise<void> {
+  async renameCategory(categoryUuid: string, name: string): Promise<void> {
     this.ensureUserExists();
     const now = Date.now();
+    const row = this.getCategoryRowByUuid(categoryUuid);
+    if (!row) return;
     this.db
       .prepare(
         `UPDATE ${SQLiteTables.categories}
-         SET name = ?, updated_at = ?
+         SET name = ?, updated_at = ?, version = COALESCE(version, 1) + 1
          WHERE user_id = ? AND id = ?`,
       )
-      .run(name, now, this.userId, id);
+      .run(name, now, this.userId, row.id);
   }
 
-  async deleteCategory(id: number, options?: {reassignTo?: number}): Promise<void> {
+  async deleteCategory(categoryUuid: string, options?: {reassignTo?: string}): Promise<void> {
     this.ensureUserExists();
-    if (id === DEFAULT_CATEGORY_ID) return;
-    const target = options?.reassignTo ?? DEFAULT_CATEGORY_ID;
+    const targetUuid = options?.reassignTo || DEFAULT_CATEGORY_UUID;
+    const row = this.getCategoryRowByUuid(categoryUuid);
+    if (!row) return;
+    if (row.category_id === DEFAULT_CATEGORY_UUID || row.id === DEFAULT_CATEGORY_ID) return;
+    const targetRow = this.getCategoryRowByUuid(targetUuid);
+    const targetId = targetRow ? targetRow.id : DEFAULT_CATEGORY_ID;
+    const targetCategoryUuid = targetRow ? targetRow.category_id : DEFAULT_CATEGORY_UUID;
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
           `UPDATE ${SQLiteTables.documents}
-           SET category = ?
+           SET category = ?, category_id = ?
            WHERE user_id = ? AND category = ?`,
         )
-        .run(target, this.userId, id);
-      this.db.prepare(`DELETE FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`).run(this.userId, id);
+        .run(targetId, targetCategoryUuid, this.userId, row.id);
+      this.db
+        .prepare(`DELETE FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`)
+        .run(this.userId, row.id);
     });
     tx();
   }
 
-  async createDocument(meta: NewDocumentPayload, content: string): Promise<number> {
+  async createDocument(meta: NewDocumentPayload, content: string): Promise<DocumentMeta> {
     this.ensureUserExists();
     this.ensureDefaultCategory();
     const createdAt = toMillis(meta.createdAt ?? Date.now());
     const updatedAt = toMillis(meta.updatedAt ?? createdAt);
     const charCount = meta.charCount ?? content.length;
-    let categoryId = meta.category ?? DEFAULT_CATEGORY_ID;
-    const categoryExists = this.db
-      .prepare(`SELECT 1 FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`)
-      .get(this.userId, categoryId);
-    if (!categoryExists) {
-      categoryId = DEFAULT_CATEGORY_ID;
+    const incomingCategoryUuid = normalizeUuid(meta.category_id ? String(meta.category_id) : "") || DEFAULT_CATEGORY_UUID;
+    const categoryRow =
+      this.getCategoryRowByUuid(incomingCategoryUuid) || this.getCategoryRowByUuid(DEFAULT_CATEGORY_UUID);
+    const categoryId = categoryRow ? categoryRow.id : DEFAULT_CATEGORY_ID;
+    const categoryUuid = categoryRow ? categoryRow.category_id : DEFAULT_CATEGORY_UUID;
+    let documentUuid = normalizeUuid(meta.document_id ? String(meta.document_id).trim() : "");
+    if (!documentUuid) {
+      documentUuid = generateUuid();
+    }
+    const source = meta.source || "remote";
+    const version = meta.version ?? 1;
+    const existing = this.db
+      .prepare(`SELECT * FROM ${SQLiteTables.documents} WHERE user_id = ? AND document_id = ?`)
+      .get(this.userId, documentUuid) as SQLiteDocumentRow | undefined;
+    if (existing) {
+      const existingVersion = Number(existing.version ?? 1);
+      if (version > existingVersion) {
+        const tx = this.db.transaction(() => {
+          this.db
+            .prepare(
+              `UPDATE ${SQLiteTables.documents}
+               SET name = ?, category = ?, category_id = ?, updated_at = ?, char_count = ?, source = ?, version = ?
+               WHERE user_id = ? AND id = ?`,
+            )
+            .run(
+              meta.name,
+              categoryId,
+              categoryUuid,
+              updatedAt,
+              charCount,
+              source,
+              version,
+              this.userId,
+              existing.id,
+            );
+          this.db
+            .prepare(
+              `INSERT INTO ${SQLiteTables.documentContent} (document_row_id, user_id, content) VALUES (?, ?, ?)
+               ON CONFLICT(document_row_id, user_id) DO UPDATE SET content=excluded.content`,
+            )
+            .run(existing.id, this.userId, content);
+        });
+        tx();
+      }
+      const row = this.getDocumentRowByUuid(documentUuid);
+      return row ? mapSqlDocToMeta(row) : mapSqlDocToMeta(existing);
     }
     const tx = this.db.transaction(() => {
       const info = this.db
         .prepare(
-          `INSERT INTO ${SQLiteTables.documents} (user_id, name, category, created_at, updated_at, char_count)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO ${SQLiteTables.documents}
+           (user_id, document_id, name, category, category_id, created_at, updated_at, char_count, source, version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(this.userId, meta.name, categoryId, createdAt, updatedAt, charCount);
+        .run(this.userId, documentUuid, meta.name, categoryId, categoryUuid, createdAt, updatedAt, charCount, source, version);
       const id = Number(info.lastInsertRowid);
       this.db
         .prepare(
-          `INSERT INTO ${SQLiteTables.documentContent} (document_id, user_id, content) VALUES (?, ?, ?)
-           ON CONFLICT(document_id, user_id) DO UPDATE SET content=excluded.content`,
+          `INSERT INTO ${SQLiteTables.documentContent} (document_row_id, user_id, content) VALUES (?, ?, ?)
+           ON CONFLICT(document_row_id, user_id) DO UPDATE SET content=excluded.content`,
         )
         .run(id, this.userId, content);
       return id;
     });
-    return tx();
-  }
-
-  async getDocumentMeta(documentId: number): Promise<DocumentMeta | null> {
-    this.ensureUserExists();
+    const id = tx();
     const row = this.db
       .prepare(`SELECT * FROM ${SQLiteTables.documents} WHERE id = ? AND user_id = ?`)
-      .get(documentId, this.userId);
-    return row ? mapSqlDocToMeta(row as SQLiteDocumentRow) : null;
+      .get(id, this.userId) as SQLiteDocumentRow | undefined;
+    return row
+      ? mapSqlDocToMeta(row)
+      : {
+          id,
+          document_id: documentUuid,
+          name: meta.name,
+          category_id: categoryUuid,
+          createdAt,
+          updatedAt,
+          charCount,
+          source,
+          version,
+          uid: this.userId,
+        };
   }
 
-  async updateDocumentMeta(documentId: number, updates: UpdateDocumentMetaInput): Promise<void> {
+  async getDocumentMeta(documentUuid: string): Promise<DocumentMeta | null> {
     this.ensureUserExists();
+    const row = this.getDocumentRowByUuid(documentUuid);
+    return row ? mapSqlDocToMeta(row) : null;
+  }
+
+  async updateDocumentMeta(documentUuid: string, updates: UpdateDocumentMetaInput): Promise<void> {
+    this.ensureUserExists();
+    const current = this.getDocumentRowByUuid(documentUuid);
+    if (!current) return;
     const fields: string[] = [];
     const values: any[] = [];
     if (updates.name !== undefined) {
       fields.push("name = ?");
       values.push(updates.name);
     }
-    if (updates.category !== undefined) {
-      const categoryRow = this.db
-        .prepare(`SELECT 1 FROM ${SQLiteTables.categories} WHERE user_id = ? AND id = ?`)
-        .get(this.userId, updates.category);
-      const nextCategory = categoryRow ? updates.category : DEFAULT_CATEGORY_ID;
+    if (updates.category_id !== undefined) {
+      const normalizedCategory = normalizeUuid(String(updates.category_id));
+      const categoryRow = this.getCategoryRowByUuid(normalizedCategory || String(updates.category_id));
+      const nextCategoryId = categoryRow ? categoryRow.id : DEFAULT_CATEGORY_ID;
+      const nextCategoryUuid = categoryRow ? categoryRow.category_id : DEFAULT_CATEGORY_UUID;
       fields.push("category = ?");
-      values.push(nextCategory);
+      values.push(nextCategoryId);
+      fields.push("category_id = ?");
+      values.push(nextCategoryUuid);
     }
     if (updates.charCount !== undefined) {
       fields.push("char_count = ?");
       values.push(updates.charCount);
     }
+    if (updates.source !== undefined) {
+      fields.push("source = ?");
+      values.push(updates.source);
+    }
     const updatedAt = toMillis(updates.updatedAt ?? Date.now());
     fields.push("updated_at = ?");
     values.push(updatedAt);
-    values.push(this.userId, documentId);
+    if (updates.version !== undefined) {
+      fields.push("version = ?");
+      values.push(updates.version);
+    } else {
+      fields.push("version = COALESCE(version, 1) + 1");
+    }
+    values.push(this.userId, current.id);
     const sql = `UPDATE ${SQLiteTables.documents} SET ${fields.join(", ")} WHERE user_id = ? AND id = ?`;
     this.db.prepare(sql).run(...values);
   }
@@ -668,44 +1022,52 @@ export class NodeDataStore implements IDataStore {
     return next;
   }
 
-  async getDocumentContent(documentId: number): Promise<string> {
+  async getDocumentContent(documentUuid: string): Promise<string> {
     this.ensureUserExists();
+    const current = this.getDocumentRowByUuid(documentUuid);
+    if (!current) return "";
     const row = this.db
-      .prepare(`SELECT content FROM ${SQLiteTables.documentContent} WHERE document_id = ? AND user_id = ?`)
-      .get(documentId, this.userId) as {content?: string} | undefined;
+      .prepare(`SELECT content FROM ${SQLiteTables.documentContent} WHERE document_row_id = ? AND user_id = ?`)
+      .get(current.id, this.userId) as {content?: string} | undefined;
     return row?.content ?? "";
   }
 
-  async saveDocumentContent(documentId: number, content: string, updatedAt?: TimestampValue): Promise<void> {
+  async saveDocumentContent(documentUuid: string, content: string, updatedAt?: TimestampValue): Promise<void> {
     this.ensureUserExists();
+    const current = this.getDocumentRowByUuid(documentUuid);
+    if (!current) return;
     const nextUpdatedAt = toMillis(updatedAt ?? Date.now());
     const charCount = content.length;
     const tx = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO ${SQLiteTables.documentContent} (document_id, user_id, content)
+          `INSERT INTO ${SQLiteTables.documentContent} (document_row_id, user_id, content)
            VALUES (?, ?, ?)
-           ON CONFLICT(document_id, user_id) DO UPDATE SET content=excluded.content`,
+           ON CONFLICT(document_row_id, user_id) DO UPDATE SET content=excluded.content`,
         )
-        .run(documentId, this.userId, content);
+        .run(current.id, this.userId, content);
       this.db
         .prepare(
           `UPDATE ${SQLiteTables.documents}
-           SET updated_at = ?, char_count = ?
+           SET updated_at = ?, char_count = ?, version = COALESCE(version, 1) + 1
            WHERE id = ? AND user_id = ?`,
         )
-        .run(nextUpdatedAt, charCount, documentId, this.userId);
+        .run(nextUpdatedAt, charCount, current.id, this.userId);
     });
     tx();
   }
 
-  async deleteDocument(documentId: number): Promise<void> {
+  async deleteDocument(documentUuid: string): Promise<void> {
     this.ensureUserExists();
+    const current = this.getDocumentRowByUuid(documentUuid);
+    if (!current) return;
     const tx = this.db.transaction(() => {
       this.db
-        .prepare(`DELETE FROM ${SQLiteTables.documentContent} WHERE document_id = ? AND user_id = ?`)
-        .run(documentId, this.userId);
-      this.db.prepare(`DELETE FROM ${SQLiteTables.documents} WHERE id = ? AND user_id = ?`).run(documentId, this.userId);
+        .prepare(`DELETE FROM ${SQLiteTables.documentContent} WHERE document_row_id = ? AND user_id = ?`)
+        .run(current.id, this.userId);
+      this.db
+        .prepare(`DELETE FROM ${SQLiteTables.documents} WHERE id = ? AND user_id = ?`)
+        .run(current.id, this.userId);
     });
     tx();
   }

@@ -38,6 +38,7 @@ const REFRESH_TOKEN_TTL_MS =
   process.env.REFRESH_TOKEN_TTL_MS != null ? Number(process.env.REFRESH_TOKEN_TTL_MS) : 14 * 24 * 60 * 60 * 1000;
 const ACCESS_COOKIE = "plainly_at";
 const REFRESH_COOKIE = "plainly_rt";
+const SESSION_FLAG_COOKIE = "plainly_session";
 const isProd = process.env.NODE_ENV === "production";
 
 const cookieBase = {
@@ -45,6 +46,13 @@ const cookieBase = {
   sameSite: "lax" as const,
   secure: isProd,
   path: API_PREFIX,
+};
+
+const sessionFlagBase = {
+  httpOnly: false,
+  sameSite: "lax" as const,
+  secure: isProd,
+  path: "/",
 };
 
 const toMillis = (v: any): number => {
@@ -68,11 +76,16 @@ const setAuthCookies = (res: express.Response, accessToken: string, refreshToken
     ...cookieBase,
     maxAge: refreshExpires - Date.now(),
   });
+  res.cookie(SESSION_FLAG_COOKIE, "1", {
+    ...sessionFlagBase,
+    maxAge: refreshExpires - Date.now(),
+  });
 };
 
 const clearAuthCookies = (res: express.Response) => {
   res.clearCookie(ACCESS_COOKIE, cookieBase);
   res.clearCookie(REFRESH_COOKIE, cookieBase);
+  res.clearCookie(SESSION_FLAG_COOKIE, sessionFlagBase);
 };
 
 type AuthContext = {userId: number; store: ReturnType<NodeDataStore["forUser"]>; user: any};
@@ -149,7 +162,7 @@ async function main() {
   // auth
   router.post("/auth/register", async (req, res) => {
     const {account, password} = req.body || {};
-    if (!account || !password) return res.status(400).json({error: "account and password required"});
+    if (!account || !password) return fail(res, "account and password required", 400);
     try {
       const user = storeFactory.createUser(String(account).trim(), String(password));
       const accessToken = signAccessToken(user);
@@ -261,19 +274,42 @@ async function main() {
   });
   router.post("/categories", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
-    const {name} = req.body || {};
+    const {name, category_id, source, version} = req.body || {};
     if (!name) return fail(res, "name required");
-    ok(res, await store.createCategory(name));
+    ok(res, await store.createCategory(name, {category_id, source, version}));
+  });
+  router.post("/categories/batch", async (req, res) => {
+    const store = ((req as any).auth as AuthContext).store;
+    const items = Array.isArray(req.body?.items) ? req.body.items : null;
+    if (!items) return fail(res, "items required");
+    const results: Array<{client_id?: string; category?: any; error?: string}> = [];
+    for (const item of items) {
+      if (!item || !item.name) {
+        results.push({client_id: item?.category_id, error: "name required"});
+        continue;
+      }
+      try {
+        const created = await store.createCategory(String(item.name), {
+          category_id: item.category_id,
+          source: item.source,
+          version: item.version,
+        });
+        results.push({client_id: item.category_id, category: created});
+      } catch (e: any) {
+        results.push({client_id: item.category_id, error: e?.message || "create failed"});
+      }
+    }
+    ok(res, {items: results});
   });
   router.patch("/categories/:id", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
-    await store.renameCategory(Number(req.params.id), req.body?.name);
+    await store.renameCategory(String(req.params.id), req.body?.name);
     ok(res, {});
   });
   router.delete("/categories/:id", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
-    const reassignTo = req.query.reassignTo ? Number(req.query.reassignTo) : undefined;
-    await store.deleteCategory(Number(req.params.id), {reassignTo});
+    const reassignTo = req.query.reassignTo ? String(req.query.reassignTo) : undefined;
+    await store.deleteCategory(String(req.params.id), {reassignTo});
     ok(res, {});
   });
 
@@ -290,34 +326,53 @@ async function main() {
   });
   router.get("/documents/:id/meta", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
-    ok(res, await store.getDocumentMeta(Number(req.params.id)));
+    ok(res, await store.getDocumentMeta(String(req.params.id)));
   });
   router.patch("/documents/:id/meta", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
-    await store.updateDocumentMeta(Number(req.params.id), req.body as UpdateDocumentMetaInput);
+    await store.updateDocumentMeta(String(req.params.id), req.body as UpdateDocumentMetaInput);
     ok(res, {});
   });
   router.post("/documents", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
     const {meta, content} = req.body || {};
     if (!meta || typeof content !== "string") return fail(res, "invalid payload");
-    const id = await store.createDocument(meta, content);
-    ok(res, id);
+    const created = await store.createDocument(meta, content);
+    ok(res, created);
+  });
+  router.post("/documents/batch", async (req, res) => {
+    const store = ((req as any).auth as AuthContext).store;
+    const items = Array.isArray(req.body?.items) ? req.body.items : null;
+    if (!items) return fail(res, "items required");
+    const results: Array<{client_id?: string; document?: any; error?: string}> = [];
+    for (const item of items) {
+      if (!item || !item.meta || typeof item.content !== "string") {
+        results.push({client_id: item?.meta?.document_id, error: "invalid payload"});
+        continue;
+      }
+      try {
+        const created = await store.createDocument(item.meta, item.content);
+        results.push({client_id: item.meta.document_id, document: created});
+      } catch (e: any) {
+        results.push({client_id: item.meta?.document_id, error: e?.message || "create failed"});
+      }
+    }
+    ok(res, {items: results});
   });
   router.get("/documents/:id/content", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
-    ok(res, await store.getDocumentContent(Number(req.params.id)));
+    ok(res, await store.getDocumentContent(String(req.params.id)));
   });
   router.put("/documents/:id/content", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
     const {content, updatedAt} = req.body || {};
     if (typeof content !== "string") return fail(res, "content required");
-    await store.saveDocumentContent(Number(req.params.id), content, updatedAt);
+    await store.saveDocumentContent(String(req.params.id), content, updatedAt);
     ok(res, {});
   });
   router.delete("/documents/:id", async (req, res) => {
     const store = ((req as any).auth as AuthContext).store;
-    await store.deleteDocument(Number(req.params.id));
+    await store.deleteDocument(String(req.params.id));
     ok(res, {});
   });
   router.post("/documents/:id/charcount", async (req, res) => {

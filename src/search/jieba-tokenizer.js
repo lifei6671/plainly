@@ -6,24 +6,46 @@ import wasmUrl from "../assets/wasm/jieba_rs_wasm_bg.wasm?url";
 
 let jiebaReady = false;
 let jiebaInitPromise = null;
+let jiebaDisabled = false;
 
 /**
  * 有些 wasm 包需要显式 init（取决于具体实现）
  * 如果你的 jieba-wasm 版本不需要 init，这个函数也不影响。
  */
 export async function ensureJiebaReady() {
-  if (jiebaReady) return;
+  if (jiebaReady) return true;
+  if (jiebaDisabled) return false;
   if (!jiebaInitPromise) {
     jiebaInitPromise = (async () => {
-      await initJieba(wasmUrl);
+      try {
+        await initJieba(wasmUrl);
+      } catch (err) {
+        // Fallback: bypass instantiateStreaming by loading ArrayBuffer directly.
+        try {
+          const resp = await fetch(wasmUrl, {cache: "reload"});
+          if (!resp.ok) {
+            throw new Error(`Failed to fetch wasm: ${resp.status}`);
+          }
+          const buffer = await resp.arrayBuffer();
+          await initJieba(buffer);
+        } catch (fallbackErr) {
+          console.error("jieba-wasm fallback init failed:", fallbackErr);
+          throw err;
+        }
+      }
       jiebaReady = true;
       console.log("jieba-wasm 初始化成功 -> ", wasmUrl);
-    })().catch((err) => {
-      jiebaInitPromise = null;
-      throw err;
-    });
+    })();
   }
-  await jiebaInitPromise;
+  try {
+    await jiebaInitPromise;
+    return true;
+  } catch (err) {
+    jiebaInitPromise = null;
+    jiebaDisabled = true;
+    console.error("jieba-wasm init failed, fallback to default tokenizer:", err);
+    return false;
+  }
 }
 
 export function isJiebaReady() {
@@ -40,10 +62,13 @@ function normalizeToken(raw) {
 export function tokenizeForSearch(text) {
   const value = String(text || "").trim();
   if (!value) return [];
-  if (!jiebaReady) return [];
-  return cut_for_search(value)
-    .map(normalizeToken)
-    .filter(Boolean);
+  if (!jiebaReady) {
+    return lunr
+      .tokenizer(value)
+      .map((token) => normalizeToken(String(token)))
+      .filter(Boolean);
+  }
+  return cut_for_search(value).map(normalizeToken).filter(Boolean);
 }
 
 /**

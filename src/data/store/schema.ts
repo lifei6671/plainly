@@ -16,7 +16,7 @@
  *  - users               -> 用户
  */
 
-import {DocumentMeta, Category, UserSession, User} from "./types";
+import {DocumentMeta, Category, UserSession, User, SourceType} from "./types";
 
 export const DEFAULT_USER_ID = 0;
 
@@ -40,19 +40,26 @@ export const SQLiteTables = {
 export interface SQLiteDocumentRow {
   id: number;
   user_id: number;
+  document_id: string;
   name: string;
   category: number;
+  category_id: string;
   created_at: number;
   updated_at: number;
   char_count?: number | null;
+  source?: SourceType | string | null;
+  version?: number | null;
 }
 
 export interface SQLiteCategoryRow {
   id: number;
   user_id: number;
+  category_id: string;
   name: string;
   created_at: number;
   updated_at: number;
+  source?: SourceType | string | null;
+  version?: number | null;
 }
 
 export interface SQLiteSettingRow {
@@ -125,10 +132,14 @@ export const SQLiteDDL = {
     CREATE TABLE IF NOT EXISTS ${SQLiteTables.categories} (
       user_id INTEGER NOT NULL,
       id INTEGER NOT NULL,
+      category_id TEXT NOT NULL,
       name TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'remote',
+      version INTEGER NOT NULL DEFAULT 1,
       PRIMARY KEY (user_id, id),
+      UNIQUE (user_id, category_id),
       UNIQUE (user_id, name),
       FOREIGN KEY (user_id) REFERENCES ${SQLiteTables.users}(id) ON DELETE CASCADE
     );
@@ -137,22 +148,27 @@ export const SQLiteDDL = {
     CREATE TABLE IF NOT EXISTS ${SQLiteTables.documents} (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
+      document_id TEXT NOT NULL,
       name TEXT NOT NULL,
       category INTEGER NOT NULL,
+      category_id TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       char_count INTEGER,
+      source TEXT NOT NULL DEFAULT 'remote',
+      version INTEGER NOT NULL DEFAULT 1,
+      UNIQUE (user_id, document_id),
       FOREIGN KEY (user_id) REFERENCES ${SQLiteTables.users}(id) ON DELETE CASCADE,
       FOREIGN KEY (category, user_id) REFERENCES ${SQLiteTables.categories}(id, user_id)
     );
   `,
   documentContent: `
     CREATE TABLE IF NOT EXISTS ${SQLiteTables.documentContent} (
-      document_id INTEGER NOT NULL,
+      document_row_id INTEGER NOT NULL,
       user_id INTEGER NOT NULL,
       content TEXT NOT NULL,
-      PRIMARY KEY (document_id, user_id),
-      FOREIGN KEY (document_id) REFERENCES ${SQLiteTables.documents}(id) ON DELETE CASCADE,
+      PRIMARY KEY (document_row_id, user_id),
+      FOREIGN KEY (document_row_id) REFERENCES ${SQLiteTables.documents}(id) ON DELETE CASCADE,
       FOREIGN KEY (user_id) REFERENCES ${SQLiteTables.users}(id) ON DELETE CASCADE
     );
   `,
@@ -168,20 +184,31 @@ export const SQLiteDDL = {
   `,
 };
 
+const normalizeSource = (value?: string | null): SourceType | undefined => {
+  if (value === "local" || value === "remote") return value;
+  return undefined;
+};
+
 export const mapSqlDocToMeta = (row: SQLiteDocumentRow): DocumentMeta => ({
-  document_id: row.id,
+  id: row.id,
+  document_id: row.document_id,
   name: row.name,
-  category: row.category,
+  category_id: row.category_id,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   charCount: row.char_count ?? undefined,
+  source: normalizeSource(row.source as string | null),
+  version: row.version ?? undefined,
   uid: row.user_id,
 });
 
 export const mapSqlCategory = (row: SQLiteCategoryRow): Category => ({
   id: row.id,
+  category_id: row.category_id,
   name: row.name,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+  source: normalizeSource(row.source as string | null),
+  version: row.version ?? undefined,
   uid: row.user_id,
 });
