@@ -11,6 +11,10 @@ permissions:
 jobs:
   web:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [browser, node, worker]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,16 +29,54 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Build web
-        run: pnpm build
-      - name: Package web
+      - name: Build browser
+        if: matrix.target == 'browser'
+        run: VITE_DATA_STORE=browser pnpm build:app
+      - name: Build browser + node
+        if: matrix.target == 'node'
+        run: VITE_DATA_STORE=remote VITE_API_BASE=/api pnpm build:node
+      - name: Build browser + worker
+        if: matrix.target == 'worker'
+        run: VITE_DATA_STORE=remote VITE_API_BASE=/api pnpm build:cf
+      - name: Package browser
+        if: matrix.target == 'browser'
         run: zip -r "plainly-web-${{ github.ref_name }}.zip" docs
-      - name: Upload web to release
+      - name: Package browser + node
+        if: matrix.target == 'node'
+        run: >
+          zip -r "plainly-node-${{ github.ref_name }}.zip"
+          docs
+          src/server
+          src/data
+          src/utils/constant.js
+          config/server.config.json
+          tsconfig.server.json
+          package.json
+          pnpm-lock.yaml
+      - name: Package browser + worker
+        if: matrix.target == 'worker'
+        run: zip -r "plainly-worker-${{ github.ref_name }}.zip" docs worker wrangler.toml
+      - name: Upload browser to release
+        if: matrix.target == 'browser'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           files: plainly-web-${{ github.ref_name }}.zip
           generate_release_notes: true
+      - name: Upload node to release
+        if: matrix.target == 'node'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: plainly-node-${{ github.ref_name }}.zip
+          generate_release_notes: false
+      - name: Upload worker to release
+        if: matrix.target == 'worker'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: plainly-worker-${{ github.ref_name }}.zip
+          generate_release_notes: false
 
   tauri:
     needs: web
