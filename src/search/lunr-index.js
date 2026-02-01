@@ -27,15 +27,19 @@ import {ensureJiebaReady, jiebaLunrTokenizer} from "./jieba-tokenizer";
 // }
 
 export default async function buildIndex(docs) {
-  await ensureJiebaReady();
+  const jiebaReady = await ensureJiebaReady();
 
-  // 全局覆盖 tokenizer（lunr 是单例 tokenizer 模型）
-  lunr.tokenizer = jiebaLunrTokenizer;
+  if (jiebaReady) {
+    // 全局覆盖 tokenizer（lunr 是单例 tokenizer 模型）
+    lunr.tokenizer = jiebaLunrTokenizer;
+  }
 
   return lunr(function buildIndexConfig() {
-    // 关键：中文建议清空默认 pipeline
-    this.pipeline.reset();
-    this.searchPipeline.reset();
+    // 关键：中文建议清空默认 pipeline，英文保持默认 pipeline
+    if (jiebaReady) {
+      this.pipeline.reset();
+      this.searchPipeline.reset();
+    }
 
     this.ref("id");
     this.field("title", {boost: 10});
