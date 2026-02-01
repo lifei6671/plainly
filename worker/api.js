@@ -351,211 +351,337 @@ const runStatements = async (db, sql) => {
 };
 
 const migrateCategoriesPrimaryKey = async (db) => {
-  const info = await tableInfo(db, SQLITE_TABLES.categories);
   const newTableName = `${SQLITE_TABLES.categories}_new`;
-  const newInfo = await tableInfo(db, newTableName);
-  if (!info.length) {
-    if (newInfo.length) {
-      await dbRun(db, `ALTER TABLE ${newTableName} RENAME TO ${SQLITE_TABLES.categories}`);
-      await dbRun(
-        db,
-        `CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLITE_TABLES.categories}(user_id)`,
-      );
-    }
-    return;
+  const documentsNewName = `${SQLITE_TABLES.documents}_new`;
+  const contentNewName = `${SQLITE_TABLES.documentContent}_new`;
+
+  let info = await tableInfo(db, SQLITE_TABLES.categories);
+  let newInfo = await tableInfo(db, newTableName);
+  if (!info.length && newInfo.length) {
+    await dbRun(db, `ALTER TABLE ${newTableName} RENAME TO ${SQLITE_TABLES.categories}`);
+    await dbRun(
+      db,
+      `CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLITE_TABLES.categories}(user_id)`,
+    );
+    info = await tableInfo(db, SQLITE_TABLES.categories);
+    newInfo = [];
   }
+
+  let documentsInfo = await tableInfo(db, SQLITE_TABLES.documents);
+  let documentsNewInfo = await tableInfo(db, documentsNewName);
+  if (!documentsInfo.length && documentsNewInfo.length) {
+    await dbRun(db, `ALTER TABLE ${documentsNewName} RENAME TO ${SQLITE_TABLES.documents}`);
+    documentsInfo = await tableInfo(db, SQLITE_TABLES.documents);
+    documentsNewInfo = [];
+  }
+
+  let contentInfo = await tableInfo(db, SQLITE_TABLES.documentContent);
+  let contentNewInfo = await tableInfo(db, contentNewName);
+  if (!contentInfo.length && contentNewInfo.length) {
+    await dbRun(db, `ALTER TABLE ${contentNewName} RENAME TO ${SQLITE_TABLES.documentContent}`);
+    contentInfo = await tableInfo(db, SQLITE_TABLES.documentContent);
+    contentNewInfo = [];
+  }
+
+  if (!info.length) return;
   if (newInfo.length) {
     await dbRun(db, `DROP TABLE ${newTableName}`);
   }
+  if (documentsNewInfo.length) {
+    await dbRun(db, `DROP TABLE ${documentsNewName}`);
+  }
+  if (contentNewInfo.length) {
+    await dbRun(db, `DROP TABLE ${contentNewName}`);
+  }
+
   const hasUserColumn = info.some((c) => c.name === "user_id");
   const pkColumns = info.filter((c) => c.pk > 0).map((c) => c.name);
   const hasIdPrimaryKey = pkColumns.length === 1 && pkColumns[0] === "id";
   if (hasUserColumn && hasIdPrimaryKey) {
     return;
   }
+
   const hasCategoryId = info.some((c) => c.name === "category_id");
   const hasLegacyUuid = info.some((c) => c.name === "category_uuid");
   const hasSource = info.some((c) => c.name === "source");
   const hasVersion = info.some((c) => c.name === "version");
 
-  const fkRow = await dbFirst(db, "PRAGMA foreign_keys");
-  const foreignKeysEnabled = toNumber(fkRow?.foreign_keys, 0) === 1;
-  await runStatements(db, "PRAGMA foreign_keys = OFF;");
+  await runStatements(
+    db,
+    SQLITE_DDL.categories.replace(SQLITE_TABLES.categories, newTableName),
+  );
 
-  try {
-    await runStatements(
-      db,
-      SQLITE_DDL.categories.replace(SQLITE_TABLES.categories, newTableName),
-    );
+  const selectColumns = ["id", "name", "created_at", "updated_at"];
+  if (hasUserColumn) selectColumns.push("user_id");
+  if (hasCategoryId) selectColumns.push("category_id");
+  if (hasLegacyUuid) selectColumns.push("category_uuid");
+  if (hasSource) selectColumns.push("source");
+  if (hasVersion) selectColumns.push("version");
+  const rows = await dbAll(
+    db,
+    `SELECT ${selectColumns.join(", ")} FROM ${SQLITE_TABLES.categories}`,
+  );
 
-    const selectColumns = ["id", "name", "created_at", "updated_at"];
-    if (hasUserColumn) selectColumns.push("user_id");
-    if (hasCategoryId) selectColumns.push("category_id");
-    if (hasLegacyUuid) selectColumns.push("category_uuid");
-    if (hasSource) selectColumns.push("source");
-    if (hasVersion) selectColumns.push("version");
-    const rows = await dbAll(
-      db,
-      `SELECT ${selectColumns.join(", ")} FROM ${SQLITE_TABLES.categories}`,
-    );
-
-    const userRowExists = async (userId) =>
-      dbFirst(db, `SELECT id FROM ${SQLITE_TABLES.users} WHERE id = ?`, [userId]);
-    const accountExists = async (account) =>
-      dbFirst(db, `SELECT id FROM ${SQLITE_TABLES.users} WHERE account = ?`, [account]);
-    const ensureUserRow = async (userId) => {
-      if (await userRowExists(userId)) return;
-      const now = Date.now();
-      const baseAccount = `legacy_${userId}`;
-      let account = baseAccount;
-      let suffix = 0;
-      while (await accountExists(account)) {
-        suffix += 1;
-        account = `${baseAccount}_${suffix}`;
-      }
-      await dbRun(
-        db,
-        `INSERT INTO ${SQLITE_TABLES.users}
-         (id, account, password, registered_at, last_login_at, last_login_ip, status, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, account, "", now, now, "0.0.0.0", 1, now],
-      );
-    };
-
-    const insertCategory = async (
-      userId,
-      categoryUuid,
-      name,
-      createdAt,
-      updatedAt,
-      source,
-      version,
-    ) => {
-      const result = await dbRun(
-        db,
-        `INSERT OR IGNORE INTO ${newTableName}
-         (user_id, category_id, name, created_at, updated_at, source, version)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [userId, categoryUuid, name, createdAt, updatedAt, source, version],
-      );
-      let newId = toNumber(result?.meta?.last_row_id, 0);
-      if (!newId) {
-        const row = await dbFirst(
-          db,
-          `SELECT id FROM ${newTableName} WHERE user_id = ? AND category_id = ?`,
-          [userId, categoryUuid],
-        );
-        newId = toNumber(row?.id, 0);
-      }
-      return newId;
-    };
-
-    const idMap = new Map();
-    const newIdByCategoryKey = new Map();
-    const defaultIdByUser = new Map();
-    const seenUsers = new Set();
+  const userRowExists = async (userId) =>
+    dbFirst(db, `SELECT id FROM ${SQLITE_TABLES.users} WHERE id = ?`, [userId]);
+  const accountExists = async (account) =>
+    dbFirst(db, `SELECT id FROM ${SQLITE_TABLES.users} WHERE account = ?`, [account]);
+  const ensureUserRow = async (userId) => {
+    const resolvedUserId = toNumber(userId, MIGRATION_USER_ID);
+    if (await userRowExists(resolvedUserId)) return resolvedUserId;
     const now = Date.now();
-    const ensureDefault = async (userId) => {
-      const resolvedUserId = toNumber(userId, MIGRATION_USER_ID);
-      await ensureUserRow(resolvedUserId);
-      if (defaultIdByUser.has(resolvedUserId)) return;
-      const newId = await insertCategory(
-        resolvedUserId,
-        DEFAULT_CATEGORY_UUID,
-        DEFAULT_CATEGORY_NAME,
-        now,
-        now,
-        "remote",
-        1,
-      );
-      defaultIdByUser.set(resolvedUserId, newId);
-    };
-
-    for (const row of rows) {
-      const userId = hasUserColumn ? toNumber(row.user_id, MIGRATION_USER_ID) : MIGRATION_USER_ID;
-      await ensureUserRow(userId);
-      seenUsers.add(userId);
-      const rawCategoryId = hasCategoryId
-        ? row.category_id
-        : hasLegacyUuid
-          ? row.category_uuid
-          : null;
-      let categoryUuid = normalizeUuid(rawCategoryId || "");
-      if (!categoryUuid) {
-        categoryUuid = toNumber(row.id, 0) === DEFAULT_CATEGORY_ID ? DEFAULT_CATEGORY_UUID : generateUuid();
-      }
-      const createdAt = toNumber(row.created_at, now) || now;
-      const updatedAt = toNumber(row.updated_at, createdAt) || createdAt;
-      const source = row.source || "remote";
-      const version = row.version ?? 1;
-      const categoryKey = `${userId}:${categoryUuid}`;
-      let newId = newIdByCategoryKey.get(categoryKey);
-      if (!newId) {
-        newId = await insertCategory(
-          userId,
-          categoryUuid,
-          String(row.name || DEFAULT_CATEGORY_NAME),
-          createdAt,
-          updatedAt,
-          source,
-          version,
-        );
-        newIdByCategoryKey.set(categoryKey, newId);
-      }
-      idMap.set(`${userId}:${toNumber(row.id, 0)}`, newId);
-      if (categoryUuid === DEFAULT_CATEGORY_UUID && !defaultIdByUser.has(userId)) {
-        defaultIdByUser.set(userId, newId);
-      }
+    const baseAccount = `legacy_${resolvedUserId}`;
+    let account = baseAccount;
+    let suffix = 0;
+    while (await accountExists(account)) {
+      suffix += 1;
+      account = `${baseAccount}_${suffix}`;
     }
-
-    for (const userId of seenUsers) {
-      await ensureDefault(userId);
-    }
-
-    const docInfo = await tableInfo(db, SQLITE_TABLES.documents);
-    if (docInfo.length) {
-      const docHasUser = docInfo.some((c) => c.name === "user_id");
-      const docColumns = ["id", "category"];
-      if (docHasUser) docColumns.push("user_id");
-      const docs = await dbAll(
-        db,
-        `SELECT ${docColumns.join(", ")} FROM ${SQLITE_TABLES.documents}`,
-      );
-      for (const doc of docs) {
-        const userId = docHasUser ? toNumber(doc.user_id, MIGRATION_USER_ID) : MIGRATION_USER_ID;
-        await ensureUserRow(userId);
-        const oldCategoryId = toNumber(doc.category, DEFAULT_CATEGORY_ID);
-        let nextId = idMap.get(`${userId}:${oldCategoryId}`);
-        if (!nextId) {
-          await ensureDefault(userId);
-          nextId = defaultIdByUser.get(userId);
-        }
-        if (nextId && nextId !== oldCategoryId) {
-          if (docHasUser) {
-            await dbRun(
-              db,
-              `UPDATE ${SQLITE_TABLES.documents} SET category = ? WHERE user_id = ? AND id = ?`,
-              [nextId, userId, doc.id],
-            );
-          } else {
-            await dbRun(
-              db,
-              `UPDATE ${SQLITE_TABLES.documents} SET category = ? WHERE id = ?`,
-              [nextId, doc.id],
-            );
-          }
-        }
-      }
-    }
-
-    await dbRun(db, `DROP TABLE ${SQLITE_TABLES.categories}`);
-    await dbRun(db, `ALTER TABLE ${newTableName} RENAME TO ${SQLITE_TABLES.categories}`);
     await dbRun(
       db,
-      `CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLITE_TABLES.categories}(user_id)`,
+      `INSERT INTO ${SQLITE_TABLES.users}
+       (id, account, password, registered_at, last_login_at, last_login_ip, status, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [resolvedUserId, account, "", now, now, "0.0.0.0", 1, now],
     );
-  } finally {
-    await runStatements(db, `PRAGMA foreign_keys = ${foreignKeysEnabled ? "ON" : "OFF"};`);
+    return resolvedUserId;
+  };
+
+  const insertCategory = async (
+    userId,
+    categoryUuid,
+    name,
+    createdAt,
+    updatedAt,
+    source,
+    version,
+  ) => {
+    const result = await dbRun(
+      db,
+      `INSERT OR IGNORE INTO ${newTableName}
+       (user_id, category_id, name, created_at, updated_at, source, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [userId, categoryUuid, name, createdAt, updatedAt, source, version],
+    );
+    let newId = toNumber(result?.meta?.last_row_id, 0);
+    if (!newId) {
+      const row = await dbFirst(
+        db,
+        `SELECT id FROM ${newTableName} WHERE user_id = ? AND category_id = ?`,
+        [userId, categoryUuid],
+      );
+      newId = toNumber(row?.id, 0);
+    }
+    return newId;
+  };
+
+  const idMap = new Map();
+  const categoryUuidByKey = new Map();
+  const newIdByCategoryKey = new Map();
+  const defaultIdByUser = new Map();
+  const seenUsers = new Set();
+  const now = Date.now();
+  const ensureDefault = async (userId) => {
+    const resolvedUserId = await ensureUserRow(userId);
+    if (defaultIdByUser.has(resolvedUserId)) return;
+    const newId = await insertCategory(
+      resolvedUserId,
+      DEFAULT_CATEGORY_UUID,
+      DEFAULT_CATEGORY_NAME,
+      now,
+      now,
+      "remote",
+      1,
+    );
+    defaultIdByUser.set(resolvedUserId, newId);
+    if (!categoryUuidByKey.has(`${resolvedUserId}:${DEFAULT_CATEGORY_ID}`)) {
+      categoryUuidByKey.set(`${resolvedUserId}:${DEFAULT_CATEGORY_ID}`, DEFAULT_CATEGORY_UUID);
+    }
+  };
+
+  for (const row of rows) {
+    const userId = hasUserColumn ? toNumber(row.user_id, MIGRATION_USER_ID) : MIGRATION_USER_ID;
+    const resolvedUserId = await ensureUserRow(userId);
+    seenUsers.add(resolvedUserId);
+    const rawCategoryId = hasCategoryId
+      ? row.category_id
+      : hasLegacyUuid
+        ? row.category_uuid
+        : null;
+    let categoryUuid = normalizeUuid(rawCategoryId || "");
+    if (!categoryUuid) {
+      categoryUuid = toNumber(row.id, 0) === DEFAULT_CATEGORY_ID ? DEFAULT_CATEGORY_UUID : generateUuid();
+    }
+    const createdAt = toNumber(row.created_at, now) || now;
+    const updatedAt = toNumber(row.updated_at, createdAt) || createdAt;
+    const source = row.source || "remote";
+    const version = row.version ?? 1;
+    const categoryKey = `${resolvedUserId}:${categoryUuid}`;
+    let newId = newIdByCategoryKey.get(categoryKey);
+    if (!newId) {
+      newId = await insertCategory(
+        resolvedUserId,
+        categoryUuid,
+        String(row.name || DEFAULT_CATEGORY_NAME),
+        createdAt,
+        updatedAt,
+        source,
+        version,
+      );
+      newIdByCategoryKey.set(categoryKey, newId);
+    }
+    const oldId = toNumber(row.id, 0);
+    if (oldId) {
+      idMap.set(`${resolvedUserId}:${oldId}`, newId);
+      categoryUuidByKey.set(`${resolvedUserId}:${oldId}`, categoryUuid);
+    }
+    if (categoryUuid === DEFAULT_CATEGORY_UUID && !defaultIdByUser.has(resolvedUserId)) {
+      defaultIdByUser.set(resolvedUserId, newId);
+    }
+  }
+
+  for (const userId of seenUsers) {
+    await ensureDefault(userId);
+  }
+
+  if (documentsInfo.length) {
+    const docHasUser = documentsInfo.some((c) => c.name === "user_id");
+    const docHasDocumentId = documentsInfo.some((c) => c.name === "document_id");
+    const docHasCategoryId = documentsInfo.some((c) => c.name === "category_id");
+    const docHasSource = documentsInfo.some((c) => c.name === "source");
+    const docHasVersion = documentsInfo.some((c) => c.name === "version");
+    const docHasContentNorm = documentsInfo.some((c) => c.name === "content_norm");
+    const docHasCharCount = documentsInfo.some((c) => c.name === "char_count");
+
+    const docColumns = ["id", "name", "category", "created_at", "updated_at"];
+    if (docHasUser) docColumns.push("user_id");
+    if (docHasDocumentId) docColumns.push("document_id");
+    if (docHasCategoryId) docColumns.push("category_id");
+    if (docHasSource) docColumns.push("source");
+    if (docHasVersion) docColumns.push("version");
+    if (docHasContentNorm) docColumns.push("content_norm");
+    if (docHasCharCount) docColumns.push("char_count");
+
+    const docs = await dbAll(
+      db,
+      `SELECT ${docColumns.join(", ")} FROM ${SQLITE_TABLES.documents}`,
+    );
+
+    const documentsNewDDL = SQLITE_DDL.documents
+      .replace(SQLITE_TABLES.documents, documentsNewName)
+      .replace(`REFERENCES ${SQLITE_TABLES.categories}`, `REFERENCES ${newTableName}`);
+    await runStatements(db, documentsNewDDL);
+
+    for (const doc of docs) {
+      const userId = docHasUser ? toNumber(doc.user_id, MIGRATION_USER_ID) : MIGRATION_USER_ID;
+      const resolvedUserId = await ensureUserRow(userId);
+      const oldCategoryId = toNumber(doc.category, DEFAULT_CATEGORY_ID);
+      let nextId = idMap.get(`${resolvedUserId}:${oldCategoryId}`);
+      if (!nextId) {
+        await ensureDefault(resolvedUserId);
+        nextId = defaultIdByUser.get(resolvedUserId);
+      }
+      const fallbackUuid = categoryUuidByKey.get(`${resolvedUserId}:${oldCategoryId}`);
+      const normalizedDocCategory = normalizeUuid(doc.category_id || "");
+      const categoryUuid = fallbackUuid || normalizedDocCategory || DEFAULT_CATEGORY_UUID;
+      const documentUuid = normalizeUuid(doc.document_id || "") || generateUuid();
+      const source = docHasSource ? doc.source || "remote" : "remote";
+      const version = docHasVersion ? doc.version ?? 1 : 1;
+      const contentNorm = docHasContentNorm ? doc.content_norm || "" : "";
+      const charCount = docHasCharCount ? doc.char_count ?? null : null;
+      const createdAt = toNumber(doc.created_at, now) || now;
+      const updatedAt = toNumber(doc.updated_at, createdAt) || createdAt;
+
+      await dbRun(
+        db,
+        `INSERT INTO ${documentsNewName}
+         (id, user_id, document_id, name, category, category_id, created_at, updated_at, content_norm, char_count, source, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          toNumber(doc.id, 0) || null,
+          resolvedUserId,
+          documentUuid,
+          String(doc.name || "未命名.md"),
+          nextId || DEFAULT_CATEGORY_ID,
+          categoryUuid || DEFAULT_CATEGORY_UUID,
+          createdAt,
+          updatedAt,
+          contentNorm,
+          charCount,
+          source,
+          version,
+        ],
+      );
+    }
+
+    if (contentInfo.length) {
+      const contentHasUser = contentInfo.some((c) => c.name === "user_id");
+      const contentNewDDL = SQLITE_DDL.documentContent
+        .replace(SQLITE_TABLES.documentContent, contentNewName)
+        .replace(`REFERENCES ${SQLITE_TABLES.documents}`, `REFERENCES ${documentsNewName}`);
+      await runStatements(db, contentNewDDL);
+
+      let contents = [];
+      if (contentHasUser) {
+        contents = await dbAll(
+          db,
+          `SELECT document_row_id, user_id, content FROM ${SQLITE_TABLES.documentContent}`,
+        );
+      } else if (docHasUser) {
+        contents = await dbAll(
+          db,
+          `SELECT c.document_row_id as document_row_id, d.user_id as user_id, c.content as content
+           FROM ${SQLITE_TABLES.documentContent} c
+           LEFT JOIN ${SQLITE_TABLES.documents} d
+             ON d.id = c.document_row_id`,
+        );
+      } else {
+        contents = await dbAll(
+          db,
+          `SELECT document_row_id, content FROM ${SQLITE_TABLES.documentContent}`,
+        );
+      }
+
+      for (const row of contents) {
+        const contentUserId = contentHasUser
+          ? toNumber(row.user_id, MIGRATION_USER_ID)
+          : docHasUser
+            ? toNumber(row.user_id, MIGRATION_USER_ID)
+            : MIGRATION_USER_ID;
+        await ensureUserRow(contentUserId);
+        await dbRun(
+          db,
+          `INSERT INTO ${contentNewName} (document_row_id, user_id, content) VALUES (?, ?, ?)`,
+          [toNumber(row.document_row_id, 0), contentUserId, String(row.content || "")],
+        );
+      }
+    }
+
+    if (contentInfo.length) {
+      await dbRun(db, `DROP TABLE ${SQLITE_TABLES.documentContent}`);
+    }
+    await dbRun(db, `DROP TABLE ${SQLITE_TABLES.documents}`);
+  }
+
+  await dbRun(db, `DROP TABLE ${SQLITE_TABLES.categories}`);
+  await dbRun(db, `ALTER TABLE ${newTableName} RENAME TO ${SQLITE_TABLES.categories}`);
+  await dbRun(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_categories_user ON ${SQLITE_TABLES.categories}(user_id)`,
+  );
+  if (documentsInfo.length) {
+    await dbRun(db, `ALTER TABLE ${documentsNewName} RENAME TO ${SQLITE_TABLES.documents}`);
+    await dbRun(
+      db,
+      `CREATE INDEX IF NOT EXISTS idx_documents_user ON ${SQLITE_TABLES.documents}(user_id)`,
+    );
+  }
+  if (contentInfo.length) {
+    await dbRun(db, `ALTER TABLE ${contentNewName} RENAME TO ${SQLITE_TABLES.documentContent}`);
+    await dbRun(
+      db,
+      `CREATE INDEX IF NOT EXISTS idx_document_content_user ON ${SQLITE_TABLES.documentContent}(user_id)`,
+    );
   }
 };
 
