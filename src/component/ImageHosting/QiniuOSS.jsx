@@ -2,7 +2,8 @@ import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Input, Select, Form} from "antd";
 import {QINIUOSS_IMAGE_HOSTING} from "../../utils/constant";
-import {getDataStore} from "../../data/store";
+import {getConfig, hydrateConfigSync, setConfigSync} from "../../utils/configStore";
+import {loadHostingConfig, persistHostingConfig} from "./configSync";
 
 const {Option} = Select;
 const formItemLayout = {
@@ -17,33 +18,40 @@ const formItemLayout = {
 @inject("imageHosting")
 @observer
 class QiniuOSS extends Component {
-  dataStore = getDataStore();
-
   constructor(props) {
     super(props);
+    this.defaultImageHosting = {
+      bucket: "",
+      region: "",
+      accessKey: "",
+      secretKey: "",
+      domain: "https://",
+      namespace: "",
+    };
     this.state = {
-      imageHosting: {
-        bucket: "",
-        region: "",
-        accessKey: "",
-        secretKey: "",
-        domain: "https://",
-        namespace: "",
-      },
+      imageHosting: this.defaultImageHosting,
       link: "",
     };
   }
 
   async componentDidMount() {
-    await this.dataStore.init?.();
-    const stored = (await this.dataStore.getConfig(QINIUOSS_IMAGE_HOSTING)) || {};
-    const imageHosting = {...this.state.imageHosting, ...stored};
+    const imageHosting = await loadHostingConfig({
+      key: QINIUOSS_IMAGE_HOSTING,
+      defaults: this.defaultImageHosting,
+      getConfig,
+      hydrateConfigSync,
+      setConfigSync,
+    });
     const link = (imageHosting.domain || "https://").split("://")[1] || "";
     this.setState({imageHosting, link});
   }
 
   persistConfig = (nextConfig) => {
-    this.dataStore.setConfig(QINIUOSS_IMAGE_HOSTING, nextConfig).catch(console.error);
+    persistHostingConfig({
+      key: QINIUOSS_IMAGE_HOSTING,
+      value: nextConfig,
+      setConfigSync,
+    });
   };
 
   regionChange = (value) => {

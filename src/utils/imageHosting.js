@@ -18,12 +18,16 @@ import {
   IMAGE_HOSTING_NAMES,
 } from "./constant";
 import {S3Client, PutObjectCommand} from "@aws-sdk/client-s3";
-import {toBlob, getOSSName, axiosMdnice} from "./helper";
+import {toBlob, getOSSName} from "./helper";
 import {invoke} from "@tauri-apps/api/tauri";
 import createQiniuUploadToken from "./qiuniu";
 import compressThenWebp from "./imageCompress";
 import renderObjectName from "./imageFilename";
-import {getConfigSync} from "./configStore";
+import {getConfig, getConfigSync, hydrateConfigSync, setConfigSync} from "./configStore";
+import {resolveHostingConfig} from "../component/ImageHosting/configSync";
+
+const DEFAULT_R2_FILENAME_TEMPLATE = `image_\${YYYY}\${MM}\${DD}_\${Timestamp}_\${RAND:6}.\${EXT}`;
+const R2_EXT_TOKEN = `\${EXT}`;
 
 function isTauriEnv() {
   if (typeof window === "undefined") {
@@ -89,8 +93,6 @@ function toWebpFile(blob, originalName) {
   }
 }
 
-const DEFAULT_R2_FILENAME_TEMPLATE = "image_${YYYY}${MM}${DD}_${Timestamp}_${RAND:6}.${EXT}";
-
 function showUploadNoti() {
   message.loading("图片上传中", 0);
 }
@@ -129,8 +131,18 @@ export const qiniuOSSUpload = async ({
   content = null, // store content
 }) => {
   showUploadNoti();
-  const config = getConfigSync(QINIUOSS_IMAGE_HOSTING, {}) || {};
+  const config = await resolveHostingConfig({
+    key: QINIUOSS_IMAGE_HOSTING,
+    fallback: {},
+    getConfigSync,
+    getConfig,
+    hydrateConfigSync,
+    setConfigSync,
+  });
   try {
+    if (!config.region || !config.accessKey || !config.secretKey || !config.bucket || !config.domain) {
+      throw new Error("请先配置七牛云图床");
+    }
     let {domain} = config;
     const {namespace} = config;
     // domain可能配置时末尾没有加‘/’
@@ -235,6 +247,8 @@ export const qiniuOSSUpload = async ({
       imageObservable.subscribe(imageObserver);
     };
   } catch (err) {
+    message.destroy();
+    uploadError(err.toString());
     onError(err, err.toString());
   }
 };
@@ -412,7 +426,14 @@ export const aliOSSUpload = async ({
   content = null, // store content
 }) => {
   showUploadNoti();
-  const config = getConfigSync(ALIOSS_IMAGE_HOSTING, {}) || {};
+  const config = await resolveHostingConfig({
+    key: ALIOSS_IMAGE_HOSTING,
+    fallback: {},
+    getConfigSync,
+    getConfig,
+    hydrateConfigSync,
+    setConfigSync,
+  });
   if (isTauriEnv()) {
     try {
       const uploadFile = file && file.originFileObj ? file.originFileObj : file;
@@ -508,7 +529,14 @@ export const r2Upload = async ({
 }) => {
   showUploadNoti();
   try {
-    const config = getConfigSync(R2_IMAGE_HOSTING, {}) || {};
+    const config = await resolveHostingConfig({
+      key: R2_IMAGE_HOSTING,
+      fallback: {},
+      getConfigSync,
+      getConfig,
+      hydrateConfigSync,
+      setConfigSync,
+    });
     if (!config.accountId || !config.accessKeyId || !config.secretAccessKey || !config.bucket) {
       throw new Error("请先配置 Cloudflare R2 图床");
     }
@@ -544,8 +572,8 @@ export const r2Upload = async ({
     let objectName = workingFile.name || uploadFile.name || file.name || "image";
     if (filenameTemplate) {
       let normalizedTemplate = filenameTemplate;
-      if (!normalizedTemplate.includes("${EXT}")) {
-        normalizedTemplate += ".${EXT}";
+      if (!normalizedTemplate.includes(R2_EXT_TOKEN)) {
+        normalizedTemplate += `.${R2_EXT_TOKEN}`;
       }
       objectName = renderObjectName(normalizedTemplate, {file: workingFile});
     }
@@ -642,36 +670,10 @@ export const uploadAdaptor = (...args) => {
   } else if (type === IMAGE_HOSTING_NAMES.smms) {
     return smmsUpload(...args);
   } else if (type === IMAGE_HOSTING_NAMES.r2) {
-    const config = getConfigSync(R2_IMAGE_HOSTING, {}) || {};
-    if (!config.accountId || !config.accessKeyId || !config.secretAccessKey || !config.bucket) {
-      message.error("请先配置 Cloudflare R2 图床");
-      return false;
-    }
     return r2Upload(...args);
   } else if (type === IMAGE_HOSTING_NAMES.qiniuyun) {
-    const config = getConfigSync(QINIUOSS_IMAGE_HOSTING, {}) || {};
-    if (
-      !config.region.length ||
-      !config.accessKey.length ||
-      !config.secretKey.length ||
-      !config.bucket.length ||
-      !config.domain.length
-    ) {
-      message.error("请先配置七牛云图床");
-      return false;
-    }
     return qiniuOSSUpload(...args);
   } else if (type === IMAGE_HOSTING_NAMES.aliyun) {
-    const config = getConfigSync(ALIOSS_IMAGE_HOSTING, {}) || {};
-    if (
-      !config.region.length ||
-      !config.accessKeyId.length ||
-      !config.accessKeySecret.length ||
-      !config.bucket.length
-    ) {
-      message.error("请先配置阿里云图床");
-      return false;
-    }
     return aliOSSUpload(...args);
   }
   return true;

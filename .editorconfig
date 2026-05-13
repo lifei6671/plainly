@@ -1,0 +1,50 @@
+# 放在仓库根目录
+root = true
+
+[*]
+#  统一使用功能 \n 作为换行符防止Mac、Linux以及Windows换行符不一致
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
+
+# =========================
+# Go 代码
+# =========================
+[*.go]
+indent_style = tab
+tab_width = 4
+
+# go.mod / go.sum
+[{go.mod,go.sum}]
+indent_style = tab
+
+# =========================
+# 前端代码
+# =========================
+[*.{js,ts,jsx,tsx,vue}]
+indent_style = space
+indent_size = 2
+
+# JSON / YAML
+[*.{json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# =========================
+# Markdown
+# =========================
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = off
+
+# =========================
+# Makefile
+# =========================
+[Makefile]
+indent_style = tab

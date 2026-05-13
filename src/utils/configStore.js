@@ -1,4 +1,4 @@
-import {getDataStore} from "../data/store";
+import {getDataStore} from "../data/store/index.ts";
 
 const runtimeStore = getDataStore();
 
@@ -33,20 +33,28 @@ const deserialize = (raw, fallback) => {
   }
 };
 
-export const getConfigSync = (key, fallback) => {
-  const storage = getStorage();
-  const raw = storage ? storage.getItem(key) : memoryStore.get(key);
-  return deserialize(raw, fallback ?? null);
-};
-
-export const setConfigSync = (key, value) => {
+const writeLocalConfigSync = (key, value) => {
   const raw = serialize(value);
   const storage = getStorage();
   if (storage) {
     storage.setItem(key, raw);
   }
   memoryStore.set(key, raw);
-  void runtimeStore.setConfig(key, value);
+};
+
+export const getConfigSync = (key, fallback) => {
+  const storage = getStorage();
+  const raw = storage ? storage.getItem(key) : memoryStore.get(key);
+  return deserialize(raw, fallback ?? null);
+};
+
+export const hydrateConfigSync = (key, value) => {
+  writeLocalConfigSync(key, value);
+};
+
+export const setConfigSync = (key, value) => {
+  writeLocalConfigSync(key, value);
+  runtimeStore.setConfig(key, value).catch(console.error);
 };
 
 export const removeConfigSync = (key) => {
@@ -55,7 +63,7 @@ export const removeConfigSync = (key) => {
     storage.removeItem(key);
   }
   memoryStore.delete(key);
-  void runtimeStore.removeConfig(key);
+  runtimeStore.removeConfig(key).catch(console.error);
 };
 
 export const listConfigKeysSync = (prefix) => {

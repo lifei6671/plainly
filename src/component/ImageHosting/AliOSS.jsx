@@ -2,7 +2,8 @@ import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Input, Form} from "antd";
 import {ALIOSS_IMAGE_HOSTING} from "../../utils/constant";
-import {getDataStore} from "../../data/store";
+import {getConfig, hydrateConfigSync, setConfigSync} from "../../utils/configStore";
+import {loadHostingConfig, persistHostingConfig} from "./configSync";
 
 const formItemLayout = {
   labelCol: {
@@ -16,30 +17,36 @@ const formItemLayout = {
 @inject("imageHosting")
 @observer
 class AliOSS extends Component {
-  dataStore = getDataStore();
-
   constructor(props) {
     super(props);
+    this.defaultImageHosting = {
+      region: "",
+      accessKeyId: "",
+      accessKeySecret: "",
+      bucket: "",
+    };
     this.state = {
-      imageHosting: {
-        region: "",
-        accessKeyId: "",
-        accessKeySecret: "",
-        bucket: "",
-      },
+      imageHosting: this.defaultImageHosting,
     };
   }
 
   async componentDidMount() {
-    await this.dataStore.init?.();
-    const stored = (await this.dataStore.getConfig(ALIOSS_IMAGE_HOSTING)) || {};
-    this.setState(({imageHosting}) => ({
-      imageHosting: {...imageHosting, ...stored},
-    }));
+    const imageHosting = await loadHostingConfig({
+      key: ALIOSS_IMAGE_HOSTING,
+      defaults: this.defaultImageHosting,
+      getConfig,
+      hydrateConfigSync,
+      setConfigSync,
+    });
+    this.setState({imageHosting});
   }
 
   persistConfig = (nextConfig) => {
-    this.dataStore.setConfig(ALIOSS_IMAGE_HOSTING, nextConfig).catch(console.error);
+    persistHostingConfig({
+      key: ALIOSS_IMAGE_HOSTING,
+      value: nextConfig,
+      setConfigSync,
+    });
   };
 
   regionChange = (e) => {

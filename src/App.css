@@ -117,6 +117,21 @@
   text-overflow: ellipsis;
 }
 
+.nice-status-category-trigger {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #1677ff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.nice-status-category-trigger:hover,
+.nice-status-category-trigger:focus-visible {
+  color: #0958d9;
+  text-decoration: underline;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

@@ -36,11 +36,14 @@ import bindHotkeys, {betterTab, rightClick} from "./utils/hotkey";
 import AuthModal from "./component/Auth/AuthModal";
 import {getConfigSync, setConfigSync} from "./utils/configStore";
 import {Button} from "antd";
-import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
-import {getDataStore} from "./data/store";
+import {BrowserDataStore} from "./data/store/browser/BrowserDataStore.ts";
+import {getDataStore} from "./data/store/index.ts";
 import {markIndexDirty, scheduleIndexRebuild} from "./search";
 
 const SESSION_FLAG_COOKIE = "plainly_session";
+const DATA_STORE_USER_ID_KEY = "__DATA_STORE_USER_ID__";
+const CURRENT_USER_ID_KEY = "__CURRENT_USER_ID__";
+const DATA_STORE_MODE_KEY = "__DATA_STORE_MODE__";
 
 @inject("content")
 @inject("navbar")
@@ -65,179 +68,6 @@ class App extends Component {
       (typeof process !== "undefined" && process.env?.VITE_API_BASE) ||
       "/api";
   }
-
-  mapUser = (u) => {
-    if (!u) return null;
-    return {
-      id: u.id,
-      account: u.account || u.username,
-      username: u.username || u.account,
-    };
-  };
-
-  setRuntimeUser = (user) => {
-    if (typeof window !== "undefined") {
-      if (user && user.id) {
-        window.__DATA_STORE_USER_ID__ = user.id;
-        window.__CURRENT_USER_ID__ = user.id;
-      } else {
-        window.__DATA_STORE_USER_ID__ = 0;
-        window.__CURRENT_USER_ID__ = 0;
-      }
-    }
-  };
-
-  getRuntimeUserId = () => {
-    if (typeof window === "undefined") return 0;
-    return window.__DATA_STORE_USER_ID__ || window.__CURRENT_USER_ID__ || 0;
-  };
-
-  hasSessionCookie = () => {
-    if (typeof document === "undefined") return false;
-    return document.cookie.split(";").some((item) => item.trim().startsWith(`${SESSION_FLAG_COOKIE}=`));
-  };
-
-  syncLocalToRemote = async (user) => {
-    if (!this.isRemoteMode || !user || !user.id) return;
-    try {
-      const localStore = new BrowserDataStore(0);
-      await localStore.init();
-      const remoteStore = getDataStore(Number(user.id) || 0);
-      const localCategories = await localStore.listCategories();
-      const categoryUuidMap = new Map();
-      const categoryItems = localCategories
-        .filter((category) => category && category.category_id !== DEFAULT_CATEGORY_UUID)
-        .map((category) => ({
-          name: category.name,
-          category_id: category.category_id,
-          source: "local",
-          version: category.version ?? 1,
-        }));
-      if (categoryItems.length > 0) {
-        try {
-          const result = await remoteStore.batchCreateCategories(categoryItems);
-          const items = (result && result.items) || [];
-          for (const item of items) {
-            const clientId = item?.client_id;
-            const created = item?.category;
-            if (!clientId || !created || !created.category_id) continue;
-            categoryUuidMap.set(clientId, created.category_id);
-            if (created.category_id !== clientId) {
-              await localStore.remapCategoryUuid(clientId, created.category_id);
-              if (this.props.content.documentCategoryUuid === clientId) {
-                this.props.content.setDocumentCategory(created.category_id, created.name || DEFAULT_CATEGORY_NAME);
-              }
-            }
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      }
-
-      const localDocuments = await localStore.listAllDocuments();
-      const documentItems = await Promise.all(
-        localDocuments
-          .filter((doc) => doc && doc.document_id)
-          .map(async (doc) => {
-            const content = await localStore.getDocumentContent(doc.document_id);
-            const mappedCategoryUuid =
-              categoryUuidMap.get(doc.category_id) || doc.category_id || DEFAULT_CATEGORY_UUID;
-            return {
-              meta: {
-                document_id: doc.document_id,
-                name: doc.name,
-                category_id: mappedCategoryUuid,
-                createdAt: doc.createdAt,
-                updatedAt: doc.updatedAt,
-                charCount: doc.charCount,
-                source: "local",
-                version: doc.version ?? 1,
-              },
-              content: content || "",
-            };
-          }),
-      );
-      const filteredDocs = documentItems.filter((item) => item && item.meta && item.meta.document_id);
-      if (filteredDocs.length > 0) {
-        try {
-          const result = await remoteStore.batchCreateDocuments(filteredDocs);
-          const items = (result && result.items) || [];
-          for (const item of items) {
-            const clientId = item?.client_id;
-            const created = item?.document;
-            if (!clientId || !created || !created.document_id) continue;
-            if (created.document_id !== clientId) {
-              await localStore.remapDocumentUuid(clientId, created.document_id);
-              if (this.props.content.documentUuid === clientId) {
-                this.props.content.setDocumentUuid(created.document_id);
-              }
-            }
-          }
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  clearRemoteHistory = async (userId) => {
-    if (!userId || typeof indexedDB === "undefined") return;
-    await new Promise((resolve) => {
-      const request = indexedDB.open("mdnice-local-history");
-      request.onerror = () => resolve();
-      request.onsuccess = (event) => {
-        const db = event.target.result;
-        if (!db || !db.objectStoreNames.contains("customers")) {
-          resolve();
-          return;
-        }
-        const tx = db.transaction(["customers"], "readwrite");
-        const store = tx.objectStore("customers");
-        const cursorReq = store.openCursor();
-        cursorReq.onsuccess = (cursorEvent) => {
-          const cursor = cursorEvent.target.result;
-          if (!cursor) return;
-          const value = cursor.value || {};
-          const uid = Number(value.Uid || 0);
-          if (uid === userId && value.Source === "remote") {
-            cursor.delete();
-          }
-          cursor.continue();
-        };
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-      };
-    });
-  };
-
-  clearRemoteCache = async (userId) => {
-    if (!userId) return;
-    const cacheStore = new BrowserDataStore(Number(userId) || 0);
-    await cacheStore.init();
-    await cacheStore.clearRemoteData();
-    await this.clearRemoteHistory(Number(userId) || 0);
-    try {
-      await markIndexDirty();
-      scheduleIndexRebuild();
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  resolveDataStoreMode = () => {
-    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
-      return import.meta.env.VITE_DATA_STORE;
-    }
-    if (typeof window !== "undefined" && window.__DATA_STORE_MODE__) {
-      return window.__DATA_STORE_MODE__;
-    }
-    if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
-      return process.env.DATA_STORE_MODE;
-    }
-    return "browser";
-  };
 
   componentDidMount() {
     document.addEventListener("fullscreenchange", this.solveScreenChange);
@@ -300,6 +130,177 @@ class App extends Component {
     document.removeEventListener("mozfullscreenchange", this.solveScreenChange);
     document.removeEventListener("MSFullscreenChange", this.solveScreenChange);
   }
+
+  setRuntimeUser = (user) => {
+    if (typeof window !== "undefined") {
+      if (user && user.id) {
+        window[DATA_STORE_USER_ID_KEY] = user.id;
+        window[CURRENT_USER_ID_KEY] = user.id;
+      } else {
+        window[DATA_STORE_USER_ID_KEY] = 0;
+        window[CURRENT_USER_ID_KEY] = 0;
+      }
+    }
+  };
+
+  getRuntimeUserId = () => {
+    if (typeof window === "undefined") return 0;
+    return window[DATA_STORE_USER_ID_KEY] || window[CURRENT_USER_ID_KEY] || 0;
+  };
+
+  setCurrentIndex(index) {
+    this.index = index;
+  }
+
+  hasSessionCookie = () => {
+    if (typeof document === "undefined") return false;
+    return document.cookie.split(";").some((item) => item.trim().startsWith(`${SESSION_FLAG_COOKIE}=`));
+  };
+
+  syncLocalToRemote = async (user) => {
+    if (!this.isRemoteMode || !user || !user.id) return;
+    try {
+      const localStore = new BrowserDataStore(0);
+      await localStore.init();
+      const remoteStore = getDataStore(Number(user.id) || 0);
+      const localCategories = await localStore.listCategories();
+      const categoryUuidMap = new Map();
+      const categoryItems = localCategories
+        .filter((category) => category && category.category_id !== DEFAULT_CATEGORY_UUID)
+        .map((category) => ({
+          name: category.name,
+          category_id: category.category_id,
+          source: "local",
+          version: category.version ?? 1,
+        }));
+      if (categoryItems.length > 0) {
+        try {
+          const result = await remoteStore.batchCreateCategories(categoryItems);
+          const items = (result && result.items) || [];
+          await Promise.all(
+            items.map(async (item) => {
+              const clientId = item?.client_id;
+              const created = item?.category;
+              if (!clientId || !created || !created.category_id) return;
+              categoryUuidMap.set(clientId, created.category_id);
+              if (created.category_id !== clientId) {
+                await localStore.remapCategoryUuid(clientId, created.category_id);
+                if (this.props.content.documentCategoryUuid === clientId) {
+                  this.props.content.setDocumentCategory(created.category_id, created.name || DEFAULT_CATEGORY_NAME);
+                }
+              }
+            }),
+          );
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      const localDocuments = await localStore.listAllDocuments();
+      const documentItems = await Promise.all(
+        localDocuments
+          .filter((doc) => doc && doc.document_id)
+          .map(async (doc) => {
+            const content = await localStore.getDocumentContent(doc.document_id);
+            const mappedCategoryUuid = categoryUuidMap.get(doc.category_id) || doc.category_id || DEFAULT_CATEGORY_UUID;
+            return {
+              meta: {
+                document_id: doc.document_id,
+                name: doc.name,
+                category_id: mappedCategoryUuid,
+                createdAt: doc.createdAt,
+                updatedAt: doc.updatedAt,
+                charCount: doc.charCount,
+                source: "local",
+                version: doc.version ?? 1,
+              },
+              content: content || "",
+            };
+          }),
+      );
+      const filteredDocs = documentItems.filter((item) => item && item.meta && item.meta.document_id);
+      if (filteredDocs.length > 0) {
+        try {
+          const result = await remoteStore.batchCreateDocuments(filteredDocs);
+          const items = (result && result.items) || [];
+          await Promise.all(
+            items.map(async (item) => {
+              const clientId = item?.client_id;
+              const created = item?.document;
+              if (!clientId || !created || !created.document_id) return;
+              if (created.document_id !== clientId) {
+                await localStore.remapDocumentUuid(clientId, created.document_id);
+                if (this.props.content.documentUuid === clientId) {
+                  this.props.content.setDocumentUuid(created.document_id);
+                }
+              }
+            }),
+          );
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  clearRemoteHistory = async (userId) => {
+    if (!userId || typeof indexedDB === "undefined") return;
+    await new Promise((resolve) => {
+      const request = indexedDB.open("mdnice-local-history");
+      request.onerror = () => resolve();
+      request.onsuccess = (event) => {
+        const db = event.target.result;
+        if (!db || !db.objectStoreNames.contains("customers")) {
+          resolve();
+          return;
+        }
+        const tx = db.transaction(["customers"], "readwrite");
+        const store = tx.objectStore("customers");
+        const cursorReq = store.openCursor();
+        cursorReq.onsuccess = (cursorEvent) => {
+          const cursor = cursorEvent.target.result;
+          if (!cursor) return;
+          const value = cursor.value || {};
+          const uid = Number(value.Uid || 0);
+          if (uid === userId && value.Source === "remote") {
+            cursor.delete();
+          }
+          cursor.continue();
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      };
+    });
+  };
+
+  clearRemoteCache = async (userId) => {
+    if (!userId) return;
+    const cacheStore = new BrowserDataStore(Number(userId) || 0);
+    await cacheStore.init();
+    await cacheStore.clearRemoteData();
+    await this.clearRemoteHistory(Number(userId) || 0);
+    try {
+      await markIndexDirty();
+      scheduleIndexRebuild();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  resolveDataStoreMode = () => {
+    if (typeof import.meta !== "undefined" && import.meta.env?.VITE_DATA_STORE) {
+      return import.meta.env.VITE_DATA_STORE;
+    }
+    if (typeof window !== "undefined" && window[DATA_STORE_MODE_KEY]) {
+      return window[DATA_STORE_MODE_KEY];
+    }
+    if (typeof process !== "undefined" && process.env?.DATA_STORE_MODE) {
+      return process.env.DATA_STORE_MODE;
+    }
+    return "browser";
+  };
 
   setCustomImageHosting = () => {
     if (this.props.useImageHosting === undefined) {
@@ -372,13 +373,18 @@ class App extends Component {
     this.setState({authVisible: true});
   };
 
+  handleCategoryManageOpen = () => {
+    this.props.dialog.setCategoryManageOpen(true);
+  };
+
   handleAuthClose = () => {
     this.setState({authVisible: false});
   };
 
-  apiRequest = async (path, method = "GET", body) => {
+  apiRequest = async (path, method, body) => {
+    const requestMethod = method || "GET";
     const res = await fetch(`${this.apiBase}${path}`, {
-      method,
+      method: requestMethod,
       headers: {"Content-Type": "application/json"},
       credentials: "include",
       body: body ? JSON.stringify(body) : undefined,
@@ -442,9 +448,14 @@ class App extends Component {
     }
   };
 
-  setCurrentIndex(index) {
-    this.index = index;
-  }
+  mapUser = (u) => {
+    if (!u) return null;
+    return {
+      id: u.id,
+      account: u.account || u.username,
+      username: u.username || u.account,
+    };
+  };
 
   initMermaid = () => {
     import("mermaid")
@@ -504,17 +515,6 @@ class App extends Component {
 
   handleBlur = () => {
     this.focus = false;
-  };
-
-  getStyleInstance = (instance) => {
-    if (instance) {
-      this.styleEditor = instance.editor;
-      this.styleEditor.on("keyup", (cm, e) => {
-        if ((e.keyCode >= 65 && e.keyCode <= 90) || e.keyCode === 189) {
-          cm.showHint(e);
-        }
-      });
-    }
   };
 
   handleDrop = (instance, e) => {
@@ -675,25 +675,37 @@ class App extends Component {
             </div>
             <div className={statusBarClass}>
               {this.isRemoteMode ? (
-                <>
-                  <div className="nice-status-item nice-status-item-main">
-                    <Button type="link" size="small" onClick={this.handleAuthOpen}>
-                      {this.state.currentUser
-                        ? `已登录：${this.state.currentUser.username || this.state.currentUser.account}`
-                        : "未登录"}
-                    </Button>
-                    <b>归属目录: </b>
+                <div className="nice-status-item nice-status-item-main">
+                  <Button type="link" size="small" onClick={this.handleAuthOpen}>
+                    {this.state.currentUser
+                      ? `已登录：${this.state.currentUser.username || this.state.currentUser.account}`
+                      : "未登录"}
+                  </Button>
+                  <b>归属目录: </b>
+                  <button
+                    type="button"
+                    className="nice-status-category-trigger"
+                    onClick={this.handleCategoryManageOpen}
+                    title="打开目录管理"
+                  >
                     {categoryName}
-                    &nbsp;
-                    <b>文件名: </b>
-                    {documentName || "未命名.md"}
-                  </div>
-                </>
+                  </button>
+                  &nbsp;
+                  <b>文件名: </b>
+                  {documentName || "未命名.md"}
+                </div>
               ) : (
                 <div className="nice-status-item nice-status-item-main">
                   <b>离线模式</b>&nbsp;
                   <b>归属目录: </b>
-                  {categoryName}
+                  <button
+                    type="button"
+                    className="nice-status-category-trigger"
+                    onClick={this.handleCategoryManageOpen}
+                    title="打开目录管理"
+                  >
+                    {categoryName}
+                  </button>
                   &nbsp;
                   <b>文件名: </b>
                   {documentName || "未命名.md"}

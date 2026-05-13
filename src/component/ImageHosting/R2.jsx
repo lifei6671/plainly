@@ -1,9 +1,12 @@
 import React, {Component} from "react";
 import {Input, Form, InputNumber, Select} from "antd";
 import {R2_IMAGE_HOSTING} from "../../utils/constant";
-import {getDataStore} from "../../data/store";
+import {getConfig, hydrateConfigSync, setConfigSync} from "../../utils/configStore";
+import {loadHostingConfig, persistHostingConfig} from "./configSync";
 
 const {Option} = Select;
+const DEFAULT_R2_FILENAME_TEMPLATE = `image_\${YYYY}\${MM}\${DD}_\${Timestamp}_\${RAND:6}.\${EXT}`;
+const SAMPLE_R2_FILENAME_TEMPLATE = `image_\${YYYY}\${MM}\${DD}\${hh}\${mm}\${ss}_\${Timestamp}_\${RAND:6}.\${EXT}`;
 
 const formItemLayout = {
   labelCol: {
@@ -15,11 +18,9 @@ const formItemLayout = {
 };
 
 class R2 extends Component {
-  dataStore = getDataStore();
-
   constructor(props) {
     super(props);
-    const defaults = {
+    this.defaultImageHosting = {
       accountId: "",
       accessKeyId: "",
       secretAccessKey: "",
@@ -28,22 +29,30 @@ class R2 extends Component {
       namespace: "",
       size: 0,
       quality: 88,
-      filenameTemplate: "image_${YYYY}${MM}${DD}_${Timestamp}_${RAND:6}.${EXT}",
+      filenameTemplate: DEFAULT_R2_FILENAME_TEMPLATE,
     };
     this.state = {
-      imageHosting: defaults,
+      imageHosting: this.defaultImageHosting,
     };
   }
 
   async componentDidMount() {
-    await this.dataStore.init?.();
-    const stored = (await this.dataStore.getConfig(R2_IMAGE_HOSTING)) || {};
-    const imageHosting = {...this.state.imageHosting, ...stored};
+    const imageHosting = await loadHostingConfig({
+      key: R2_IMAGE_HOSTING,
+      defaults: this.defaultImageHosting,
+      getConfig,
+      hydrateConfigSync,
+      setConfigSync,
+    });
     this.setState({imageHosting});
   }
 
   persistConfig = (nextConfig) => {
-    this.dataStore.setConfig(R2_IMAGE_HOSTING, nextConfig).catch(console.error);
+    persistHostingConfig({
+      key: R2_IMAGE_HOSTING,
+      value: nextConfig,
+      setConfigSync,
+    });
   };
 
   accountIdChange = (e) => {
@@ -150,12 +159,12 @@ class R2 extends Component {
         <Form.Item
           label="文件名"
           style={style.formItem}
-          extra="示例：image_${YYYY}${MM}${DD}${hh}${mm}${ss}_${Timestamp}_${RAND:6}.${EXT}（留空则不修改文件名）"
+          extra={`示例：${SAMPLE_R2_FILENAME_TEMPLATE}（留空则不修改文件名）`}
         >
           <Input
             value={filenameTemplate}
             onChange={this.filenameTemplateChange}
-            placeholder="image_${YYYY}${MM}${DD}${hh}${mm}${ss}_${Timestamp}_${RAND:6}.${EXT}"
+            placeholder={SAMPLE_R2_FILENAME_TEMPLATE}
           />
         </Form.Item>
         <Form.Item label="尺寸" style={style.formItem}>
