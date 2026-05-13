@@ -15,26 +15,29 @@
   },
   "scripts": {
     "start": "vite",
-    "watch": "node ./watch.js",
+    "watch": "node -r ts-node/register/transpile-only ./watch.ts",
     "build": "pnpm build:cf",
     "build:app": "vite build",
-    "postbuild:cf": "node scripts/gen-cf-headers.mjs && node scripts/gen-worker-schema.mjs",
-    "postbuild:node": "node scripts/gen-node-headers.mjs",
-    "gen:worker-schema": "node scripts/gen-worker-schema.mjs",
+    "postbuild:cf": "node -r ts-node/register/transpile-only scripts/gen-cf-headers.ts && node -r ts-node/register/transpile-only scripts/gen-worker-schema.ts",
+    "postbuild:node": "node -r ts-node/register/transpile-only scripts/gen-node-headers.ts",
+    "gen:worker-schema": "node -r ts-node/register/transpile-only scripts/gen-worker-schema.ts",
     "build:cf": "pnpm build:app && pnpm postbuild:cf",
     "build:node": "pnpm build:app && pnpm postbuild:node",
     "server": "ts-node -P tsconfig.server.json src/server/index.ts",
-    "test": "node scripts/test.js",
+    "test": "cross-env CI=true node ./node_modules/jest/bin/jest.js --config package.json --runInBand",
     "analyze": "source-map-explorer docs/assets/*.js",
-    "lint": "eslint src --ext ts,tsx,js,jsx --fix",
-    "publish:npm": "cross-env NODE_ENV=production && rm -rf lib && mkdir lib && cross-env BABEL_ENV=production npx babel src --out-dir lib --copy-files --extensions \".js,.jsx\"",
+    "lint": "pnpm lint:js && pnpm lint:types",
+    "lint:js": "eslint src --ext js,jsx,ts,tsx",
+    "lint:js:fix": "eslint src --ext js,jsx,ts,tsx --fix",
+    "lint:types": "pnpm exec tsc -p tsconfig.json --noEmit",
+    "publish:npm": "cross-env NODE_ENV=production node -r ts-node/register/transpile-only scripts/publish-npm.ts",
     "storybook": "npm run publish:npm && start-storybook -p 9001 -c .storybook",
     "dev": "vite",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "postinstall": "node scripts/copy-jieba-wasm.js"
+    "postinstall": "node -r ts-node/register/transpile-only scripts/copy-jieba-wasm.ts"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
@@ -48,11 +51,12 @@
     "ali-oss": "^6.1.1",
     "antd": "^4.24.15",
     "axios": "1.12.0",
-    "cookie-parser": "^1.4.7",
+    "better-sqlite3": "^9.4.5",
     "body-parser": "^1.20.3",
     "browser-image-compression": "^2.0.2",
     "classnames": "^2.3.2",
     "codemirror": "^5.65.16",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "diff-match-patch": "^1.0.4",
     "enquire.js": "^2.1.6",
@@ -60,6 +64,7 @@
     "highlight.js": "^11.9.0",
     "idb": "^8.0.3",
     "jieba-wasm": "^2.4.0",
+    "jsonwebtoken": "^9.0.2",
     "juice": "^5.2.0",
     "lodash.debounce": "^4.0.8",
     "lodash.throttle": "^4.1.1",
@@ -85,9 +90,7 @@
     "remark-parse": "^11.0.0",
     "sitdown": "^1.1.1",
     "strip-markdown": "^6.0.0",
-    "unified": "^11.0.5",
-    "jsonwebtoken": "^9.0.2",
-    "better-sqlite3": "^9.4.5"
+    "unified": "^11.0.5"
   },
   "devDependencies": {
     "@babel/cli": "^7.24.1",
@@ -180,12 +183,11 @@
     "testEnvironment": "jsdom",
     "testURL": "http://localhost",
     "transform": {
-      "^.+\\.(js|jsx|ts|tsx)$": "<rootDir>/node_modules/babel-jest",
+      "^.+\\.(js|jsx|ts|tsx)$": "<rootDir>/config/jest/jsTransform.js",
       "^.+\\.css$": "<rootDir>/config/jest/cssTransform.js",
       "^(?!.*\\.(js|jsx|ts|tsx|css|json)$)": "<rootDir>/config/jest/fileTransform.js"
     },
     "transformIgnorePatterns": [
-      "[/\\\\]node_modules[/\\\\].+\\.(js|jsx|ts|tsx)$",
       "^.+\\.module\\.(css|sass|scss)$"
     ],
     "moduleNameMapper": {
@@ -244,12 +246,5 @@
       "pre-commit": "lint-staged"
     }
   },
-  "lint-staged": {
-    "src/**/*.{jsx,txs,ts,js,json}": [
-      "prettier --write",
-      "eslint --fix",
-      "git add"
-    ]
-  },
-  "packageManager": "pnpm@9.12.0"
+  "packageManager": "pnpm@11.1.1"
 }

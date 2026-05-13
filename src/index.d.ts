@@ -1,5 +1,15 @@
 import * as React from "react";
 
+declare module "*.md?raw" {
+  const content: string;
+  export default content;
+}
+
+declare module "jieba-wasm/web" {
+  export default function initJieba(input?: string | ArrayBuffer | ArrayBufferView): Promise<void>;
+  export function cut_for_search(text: string): string[];
+}
+
 // declare const PreviewTypes: ["pc", "mobile"];
 
 // export declare type PreviewType = (typeof PreviewTypes)[number];

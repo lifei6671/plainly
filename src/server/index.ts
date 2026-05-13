@@ -90,30 +90,32 @@ const clearAuthCookies = (res: express.Response) => {
 
 type AuthContext = {userId: number; store: ReturnType<NodeDataStore["forUser"]>; user: any};
 
-const authRequired =
-  (storeFactory: NodeDataStore) =>
-  async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    try {
-      const token = parseBearer(req) || ((req as any).cookies ? (req as any).cookies[ACCESS_COOKIE] : null);
-      if (!token) return fail(res, "access token required", 401);
-      const decoded = jwt.verify(token, JWT_SECRET) as {sub: number; ver?: number; iat?: number};
-      const userId = Number(decoded.sub);
-      if (!Number.isFinite(userId) || userId <= 0) return fail(res, "invalid token", 401);
-      const user = storeFactory.getUser(userId);
-      if (!user) return fail(res, "user disabled or missing", 401);
-      if (decoded.ver != null && user.tokenVersion != null && decoded.ver !== user.tokenVersion) {
-        return fail(res, "token expired", 401);
-      }
-      const pwdChangedMs = user.passwordChangedAt != null ? toMillis(user.passwordChangedAt) : null;
-      if (pwdChangedMs && decoded.iat && decoded.iat * 1000 < pwdChangedMs) {
-        return fail(res, "password changed", 401);
-      }
-      (req as any).auth = {userId, store: storeFactory.forUser(userId), user} as AuthContext;
-      return next();
-    } catch (e) {
-      return fail(res, "unauthorized", 401);
+const authRequired = (storeFactory: NodeDataStore) => async (
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) => {
+  try {
+    const token = parseBearer(req) || ((req as any).cookies ? (req as any).cookies[ACCESS_COOKIE] : null);
+    if (!token) return fail(res, "access token required", 401);
+    const decoded = jwt.verify(token, JWT_SECRET) as {sub: number; ver?: number; iat?: number};
+    const userId = Number(decoded.sub);
+    if (!Number.isFinite(userId) || userId <= 0) return fail(res, "invalid token", 401);
+    const user = storeFactory.getUser(userId);
+    if (!user) return fail(res, "user disabled or missing", 401);
+    if (decoded.ver != null && user.tokenVersion != null && decoded.ver !== user.tokenVersion) {
+      return fail(res, "token expired", 401);
     }
-  };
+    const pwdChangedMs = user.passwordChangedAt != null ? toMillis(user.passwordChangedAt) : null;
+    if (pwdChangedMs && decoded.iat && decoded.iat * 1000 < pwdChangedMs) {
+      return fail(res, "password changed", 401);
+    }
+    (req as any).auth = {userId, store: storeFactory.forUser(userId), user} as AuthContext;
+    return next();
+  } catch (e) {
+    return fail(res, "unauthorized", 401);
+  }
+};
 
 const signAccessToken = (user: {id: number; tokenVersion?: number; passwordChangedAt?: any}) => {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -177,7 +179,7 @@ async function main() {
       });
       setAuthCookies(res, accessToken, refreshToken, sessionExpires);
       ok(res, {user: {id: user.id, account: user.account}, accessToken});
-    } catch (e: any) {
+    } catch (e) {
       fail(res, e?.message || "register failed");
     }
   });
@@ -256,7 +258,7 @@ async function main() {
       storeFactory.updatePassword(userId, String(newPassword), oldPassword ? String(oldPassword) : undefined);
       clearAuthCookies(res);
       ok(res, {});
-    } catch (e: any) {
+    } catch (e) {
       fail(res, e?.message || "update password failed");
     }
   });
@@ -266,21 +268,21 @@ async function main() {
 
   // categories
   router.get("/categories", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     ok(res, await store.listCategories());
   });
   router.get("/categories/count", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     ok(res, await store.listCategoriesWithCount());
   });
   router.post("/categories", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const {name, category_id, source, version} = req.body || {};
     if (!name) return fail(res, "name required");
     ok(res, await store.createCategory(name, {category_id, source, version}));
   });
   router.post("/categories/batch", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const items = Array.isArray(req.body?.items) ? req.body.items : null;
     if (!items) return fail(res, "items required");
     const results: Array<{client_id?: string; category?: any; error?: string}> = [];
@@ -296,19 +298,19 @@ async function main() {
           version: item.version,
         });
         results.push({client_id: item.category_id, category: created});
-      } catch (e: any) {
+      } catch (e) {
         results.push({client_id: item.category_id, error: e?.message || "create failed"});
       }
     }
     ok(res, {items: results});
   });
   router.patch("/categories/:id", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     await store.renameCategory(String(req.params.id), req.body?.name);
     ok(res, {});
   });
   router.delete("/categories/:id", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const reassignTo = req.query.reassignTo ? String(req.query.reassignTo) : undefined;
     await store.deleteCategory(String(req.params.id), {reassignTo});
     ok(res, {});
@@ -316,17 +318,17 @@ async function main() {
 
   // documents
   router.get("/documents", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const offset = Number(req.query.offset || 0);
     const limit = Number(req.query.limit || 20);
     ok(res, await store.listDocumentsPage(offset, limit));
   });
   router.get("/documents/all", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     ok(res, await store.listAllDocuments());
   });
   router.post("/documents/search", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const {tokens, category_id, offset, limit} = req.body || {};
     if (!Array.isArray(tokens)) return fail(res, "tokens required");
     ok(
@@ -339,27 +341,27 @@ async function main() {
     );
   });
   router.get("/documents/:id/meta", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     ok(res, await store.getDocumentMeta(String(req.params.id)));
   });
   router.get("/documents/:id/rename", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     ok(res, await store.getRenameData(String(req.params.id)));
   });
   router.patch("/documents/:id/meta", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     await store.updateDocumentMeta(String(req.params.id), req.body as UpdateDocumentMetaInput);
     ok(res, {});
   });
   router.post("/documents", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const {meta, content} = req.body || {};
     if (!meta || typeof content !== "string") return fail(res, "invalid payload");
     const created = await store.createDocument(meta, content);
     ok(res, created);
   });
   router.post("/documents/batch", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const items = Array.isArray(req.body?.items) ? req.body.items : null;
     if (!items) return fail(res, "items required");
     const results: Array<{client_id?: string; document?: any; error?: string}> = [];
@@ -371,52 +373,52 @@ async function main() {
       try {
         const created = await store.createDocument(item.meta, item.content);
         results.push({client_id: item.meta.document_id, document: created});
-      } catch (e: any) {
+      } catch (e) {
         results.push({client_id: item.meta?.document_id, error: e?.message || "create failed"});
       }
     }
     ok(res, {items: results});
   });
   router.get("/documents/:id/content", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     ok(res, await store.getDocumentContent(String(req.params.id)));
   });
   router.put("/documents/:id/content", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const {content, updatedAt} = req.body || {};
     if (typeof content !== "string") return fail(res, "content required");
     await store.saveDocumentContent(String(req.params.id), content, updatedAt);
     ok(res, {});
   });
   router.delete("/documents/:id", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     await store.deleteDocument(String(req.params.id));
     ok(res, {});
   });
   router.post("/documents/:id/charcount", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const meta = req.body;
     ok(res, await store.ensureDocumentCharCount(meta));
   });
 
   // config
   router.get("/config", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const prefix = req.query.prefix ? String(req.query.prefix) : undefined;
     ok(res, await store.listConfigKeys(prefix));
   });
   router.get("/config/:key", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     const fallback = req.query.fallback ? JSON.parse(String(req.query.fallback)) : undefined;
     ok(res, await store.getConfig(req.params.key, fallback));
   });
   router.put("/config/:key", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     await store.setConfig(req.params.key, req.body?.value);
     ok(res, {});
   });
   router.delete("/config/:key", async (req, res) => {
-    const store = ((req as any).auth as AuthContext).store;
+    const {store} = (req as any).auth as AuthContext;
     await store.removeConfig(req.params.key);
     ok(res, {});
   });

@@ -19,6 +19,31 @@
     "node": true
   },
   "plugins": ["react", "react-hooks", "jsx-a11y", "import"],
+  "overrides": [
+    {
+      "files": ["**/*.ts", "**/*.tsx"],
+      "rules": {
+        "no-undef": 0,
+        "no-unused-vars": 0,
+        "no-restricted-globals": 0,
+        "import/prefer-default-export": 0,
+        "react/require-default-props": 0,
+        "react/state-in-constructor": 0,
+        "prettier/prettier": 0
+      }
+    },
+    {
+      "files": ["src/data/store/browser/BrowserDataStore.ts", "src/server/NodeDataStore.ts", "src/server/index.ts"],
+      "rules": {
+        "no-bitwise": 0,
+        "no-await-in-loop": 0,
+        "consistent-return": 0,
+        "default-param-last": 0,
+        "no-shadow": 0,
+        "global-require": 0
+      }
+    }
+  ],
   "settings": {
     "import/resolver": {
       "node": {
@@ -30,15 +55,19 @@
     "quotes": [0, "double"],
     "class-methods-use-this": 0,
     "import/no-named-as-default": 0,
+    "import/extensions": 0,
     "react/jsx-filename-extension": [
       "error",
       {
-        "extensions": [".js", ".jsx"]
+        "extensions": [".js", ".jsx", ".tsx"]
       }
     ],
     "react/prop-types": 0,
     "react/destructuring-assignment": 0,
     "react/no-array-index-key": 0,
+    "react/no-unused-class-component-methods": 0,
+    "react/jsx-no-constructed-context-values": 0,
+    "react/sort-comp": 0,
     "no-use-before-define": 0,
     "no-restricted-syntax": 0,
     "no-var": 0,
@@ -49,6 +78,7 @@
     "object-shorthand": 0,
     "no-else-return": 0,
     "no-param-reassign": 0,
+    "no-nested-ternary": 0,
     "no-unused-vars": 1,
     "jsx-a11y/anchor-is-valid": 0,
     "react/jsx-props-no-spreading": 0,
@@ -63,12 +93,16 @@
     "react/no-danger": 0,
     "no-console": 0,
     "camelcase": 0,
+    "no-template-curly-in-string": 0,
+    "no-useless-escape": 0,
+    "no-control-regex": 0,
+    "no-underscore-dangle": 0,
     "import/no-dynamic-require": 1,
     "global-require": 1,
     "react/forbid-prop-types": 1,
     "jsx-a11y/accessible-emoji": 0,
     "jsx-a11y/click-events-have-key-events": 0,
     "jsx-a11y/no-static-element-interactions": 0,
-    "import/no-unresolved": ["error", { "ignore": ["\\?raw$"] }]
+    "import/no-unresolved": ["error", { "ignore": ["\\?raw$", "^jieba-wasm/web$"] }]
   }
 }

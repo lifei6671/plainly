@@ -1,0 +1,6 @@
+allowBuilds:
+  better-sqlite3: true
+  core-js: true
+  ejs: true
+  esbuild: true
+  husky: true

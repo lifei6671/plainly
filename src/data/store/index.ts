@@ -35,9 +35,7 @@ const resolveDefaultMode = (): DataStoreMode => {
 const resolveDefaultUserId = (): number => {
   if (typeof window !== "undefined") {
     const globalId =
-      (window as any).__USER_ID__ ??
-      (window as any).__CURRENT_USER_ID__ ??
-      (window as any).__DATA_STORE_USER_ID__;
+      (window as any).__USER_ID__ ?? (window as any).__CURRENT_USER_ID__ ?? (window as any).__DATA_STORE_USER_ID__;
     if (typeof globalId === "number" && Number.isFinite(globalId)) {
       return globalId;
     }
@@ -63,10 +61,7 @@ const resolveDefaultUserId = (): number => {
   return 0;
 };
 
-export const resolveDataStoreInfo = (
-  modeOrUserId?: DataStoreMode | number,
-  userId?: number,
-): DataStoreRuntimeInfo => {
+export const resolveDataStoreInfo = (modeOrUserId?: DataStoreMode | number, userId?: number): DataStoreRuntimeInfo => {
   let resolvedUserId = userId;
   let desiredMode: DataStoreMode | undefined;
   if (typeof modeOrUserId === "number") {
@@ -83,10 +78,7 @@ export const resolveDataStoreInfo = (
   return {userId: finalUserId, configuredMode, effectiveMode};
 };
 
-export const shouldCacheRemoteStore = (
-  modeOrUserId?: DataStoreMode | number,
-  userId?: number,
-): boolean => {
+export const shouldCacheRemoteStore = (modeOrUserId?: DataStoreMode | number, userId?: number): boolean => {
   const info = resolveDataStoreInfo(modeOrUserId, userId);
   return info.effectiveMode === "remote" && info.userId > 0;
 };
@@ -97,7 +89,6 @@ export function getDataStore(modeOrUserId?: DataStoreMode | number, userId?: num
   if (!cachedStore || cachedMode !== effectiveMode || cachedUserId !== finalUserId) {
     switch (effectiveMode) {
       case "browser":
-      default:
         cachedStore = new BrowserDataStore(finalUserId || 0);
         cachedMode = effectiveMode;
         cachedUserId = finalUserId || 0;
@@ -112,6 +103,11 @@ export function getDataStore(modeOrUserId?: DataStoreMode | number, userId?: num
         cachedUserId = finalUserId;
         break;
       }
+      default:
+        cachedStore = new BrowserDataStore(finalUserId || 0);
+        cachedMode = effectiveMode;
+        cachedUserId = finalUserId || 0;
+        break;
     }
   }
   return cachedStore;

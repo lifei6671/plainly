@@ -17,7 +17,14 @@ type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
 const SESSION_FLAG_COOKIE = "plainly_session";
 
 export class RemoteDataStore implements IDataStore {
-  constructor(private baseUrl: string = "/api", private userId: number = 0) {}
+  private baseUrl: string;
+
+  private userId: number;
+
+  constructor(baseUrl: string = "/api", userId: number = 0) {
+    this.baseUrl = baseUrl;
+    this.userId = userId;
+  }
 
   setUserId(uid: number) {
     this.userId = uid;
@@ -39,12 +46,9 @@ export class RemoteDataStore implements IDataStore {
     return response.ok && (!payload || payload.errcode === 0);
   }
 
-  private async request<T>(
-    path: string,
-    method: HttpMethod = "GET",
-    body?: unknown,
-    retry = true,
-  ): Promise<T> {
+  private async request<T>(path: string, method?: HttpMethod, body?: unknown, retry?: boolean): Promise<T> {
+    const shouldRetry = retry !== false;
+    const requestMethod = method || "GET";
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -52,15 +56,15 @@ export class RemoteDataStore implements IDataStore {
       headers["X-User-Id"] = String(this.userId);
     }
     const response = await fetch(`${this.baseUrl}${path}`, {
-      method,
+      method: requestMethod,
       headers,
       credentials: "include",
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    if (response.status === 401 && retry && this.hasSessionCookie()) {
+    if (response.status === 401 && shouldRetry && this.hasSessionCookie()) {
       const refreshed = await this.refreshSession();
       if (refreshed) {
-        return this.request<T>(path, method, body, false);
+        return this.request<T>(path, requestMethod, body, false);
       }
     }
     if (!response.ok) {
@@ -71,11 +75,11 @@ export class RemoteDataStore implements IDataStore {
     if (payload && payload.errcode !== undefined && payload.errcode !== 0) {
       throw new Error(payload.errmsg || "Request failed");
     }
-    return (payload && ("data" in payload ? (payload.data as T) : (payload as unknown as T))) as T;
+    return (payload && ("data" in payload ? (payload.data as T) : ((payload as unknown) as T))) as T;
   }
 
   async init(): Promise<void> {
-    return;
+    return undefined;
   }
 
   listCategories(): Promise<Category[]> {
@@ -125,10 +129,7 @@ export class RemoteDataStore implements IDataStore {
     return this.request<void>(`/documents/${encodeURIComponent(documentId)}/meta`, "PATCH", updates);
   }
 
-  listDocumentsPage(
-    offset: number,
-    limit: number,
-  ): Promise<{items: DocumentMeta[]; hasMore: boolean}> {
+  listDocumentsPage(offset: number, limit: number): Promise<{items: DocumentMeta[]; hasMore: boolean}> {
     const params = new URLSearchParams({offset: String(offset), limit: String(limit)});
     return this.request(`/documents?${params.toString()}`);
   }
@@ -146,9 +147,7 @@ export class RemoteDataStore implements IDataStore {
     const offset = Math.max(0, Number(options?.offset ?? 0));
     if (!trimmed) {
       const items = await this.listAllDocuments();
-      const filtered = options?.categoryId
-        ? items.filter((item) => item.category_id === options.categoryId)
-        : items;
+      const filtered = options?.categoryId ? items.filter((item) => item.category_id === options.categoryId) : items;
       return {
         items: filtered.slice(offset, offset + limit),
         hasMore: filtered.length > offset + limit,

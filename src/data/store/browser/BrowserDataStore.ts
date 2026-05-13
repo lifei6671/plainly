@@ -24,6 +24,7 @@ type CategoriesByLegacyId = Map<number, string>;
 
 export class BrowserDataStore implements IDataStore {
   private readonly userId: number;
+
   private readonly defaultSource: SourceType;
 
   constructor(userId = 0) {
@@ -434,8 +435,7 @@ export class BrowserDataStore implements IDataStore {
         const current = (request.result || null) as Category | null;
         if (current) {
           const nextSource = this.normalizeSource((current as any).source);
-          const nextUuid =
-            this.normalizeUuid((current as any).category_id) || DEFAULT_CATEGORY_UUID;
+          const nextUuid = this.normalizeUuid((current as any).category_id) || DEFAULT_CATEGORY_UUID;
           const nextVersion = (current as any).version ?? 1;
           if (!current.uid || (current as any).source !== nextSource || (current as any).category_id !== nextUuid) {
             store.put({
@@ -506,7 +506,7 @@ export class BrowserDataStore implements IDataStore {
   }
 
   private ensureIdKey(store: IDBObjectStore, payload: Record<string, any>, fallbackId: number) {
-    const keyPath = store.keyPath;
+    const {keyPath} = store;
     if (keyPath === "id" && !store.autoIncrement && (payload.id == null || payload.id === "")) {
       payload.id = fallbackId;
     }
@@ -515,10 +515,8 @@ export class BrowserDataStore implements IDataStore {
   private sortCategories(categories: Category[]): Category[] {
     // 默认目录永远排在最前，其余按创建时间升序
     return categories.slice().sort((a, b) => {
-      const aIsDefault =
-        (a as any).category_id === DEFAULT_CATEGORY_UUID || a.id === DEFAULT_CATEGORY_ID;
-      const bIsDefault =
-        (b as any).category_id === DEFAULT_CATEGORY_UUID || b.id === DEFAULT_CATEGORY_ID;
+      const aIsDefault = (a as any).category_id === DEFAULT_CATEGORY_UUID || a.id === DEFAULT_CATEGORY_ID;
+      const bIsDefault = (b as any).category_id === DEFAULT_CATEGORY_UUID || b.id === DEFAULT_CATEGORY_ID;
       if (aIsDefault) return -1;
       if (bIsDefault) return 1;
       return this.getTimeValue(a.createdAt) - this.getTimeValue(b.createdAt);
@@ -991,10 +989,7 @@ export class BrowserDataStore implements IDataStore {
   }
 
   async getRenameData(documentUuid: string): Promise<RenameDocumentPayload> {
-    const [meta, categories] = await Promise.all([
-      this.getDocumentMeta(documentUuid),
-      this.listCategories(),
-    ]);
+    const [meta, categories] = await Promise.all([this.getDocumentMeta(documentUuid), this.listCategories()]);
     return {meta, categories};
   }
 
@@ -1076,8 +1071,7 @@ export class BrowserDataStore implements IDataStore {
         if (!(payload as any).category_id) {
           (payload as any).category_id = DEFAULT_CATEGORY_UUID;
         } else {
-          (payload as any).category_id =
-            this.normalizeUuid((payload as any).category_id) || DEFAULT_CATEGORY_UUID;
+          (payload as any).category_id = this.normalizeUuid((payload as any).category_id) || DEFAULT_CATEGORY_UUID;
         }
         metaStore.put(payload);
         if (stores.includes("articles")) {
@@ -1522,10 +1516,7 @@ export class BrowserDataStore implements IDataStore {
           ...existing,
           ...meta,
           document_id: documentId,
-          category_id:
-            this.normalizeUuid(meta.category_id) ||
-            (existing as any)?.category_id ||
-            DEFAULT_CATEGORY_UUID,
+          category_id: this.normalizeUuid(meta.category_id) || (existing as any)?.category_id || DEFAULT_CATEGORY_UUID,
           uid: expectedUid,
           source: expectedSource,
           version: resolvedIncomingVersion,
@@ -1621,7 +1612,12 @@ export class BrowserDataStore implements IDataStore {
         const contentStore = tx.objectStore("article_content");
         const contentReq = contentStore.get(normalizedOld);
         contentReq.onsuccess = () => {
-          const contentRow = contentReq.result as {document_id: string; content?: string; uid?: number; source?: string};
+          const contentRow = contentReq.result as {
+            document_id: string;
+            content?: string;
+            uid?: number;
+            source?: string;
+          };
           if (contentRow && this.matchesScope(contentRow as any)) {
             contentStore.put({
               ...contentRow,
@@ -1821,12 +1817,9 @@ export class BrowserDataStore implements IDataStore {
             legacy.createdAt != null
               ? new Date(legacy.createdAt as string | number | Date)
               : legacy.updatedAt != null
-                ? new Date(legacy.updatedAt as string | number | Date)
-                : new Date();
-          const updatedAt =
-            legacy.updatedAt != null
               ? new Date(legacy.updatedAt as string | number | Date)
-              : createdAt;
+              : new Date();
+          const updatedAt = legacy.updatedAt != null ? new Date(legacy.updatedAt as string | number | Date) : createdAt;
           const documentUuid = this.generateUuid();
           const meta: DocumentMeta = {
             id: legacyId,
