@@ -1,5 +1,6 @@
 import MarkdownIt from "markdown-it";
 import {SQLiteTables as SQLITE_TABLES, SQLiteDDL as SQLITE_DDL} from "./schema.generated.js";
+import {filterRemoteConfigKeys, isRemoteConfigKeyAllowed} from "../src/utils/remoteConfigWhitelist";
 
 const DEFAULT_API_PREFIX = "/api";
 const ACCESS_COOKIE = "plainly_at";
@@ -1489,6 +1490,12 @@ const listConfigKeys = async (db, userId, prefix) => {
   return rows.map((row) => row.key);
 };
 
+const ensureRemoteConfigKeyAllowed = (key) => {
+  if (!isRemoteConfigKeyAllowed(key)) {
+    throw new Error(`unsupported config key: ${key}`);
+  }
+};
+
 // Cloudflare Worker API 主入口
 export async function handleApiRequest(request, env) {
   const url = new URL(request.url);
@@ -1791,10 +1798,11 @@ export async function handleApiRequest(request, env) {
     if (segments[0] === "config") {
       if (request.method === "GET" && segments.length === 1) {
         const prefix = url.searchParams.get("prefix") || undefined;
-        return jsonResponse(request, await listConfigKeys(env.DB, userId, prefix));
+        return jsonResponse(request, filterRemoteConfigKeys(await listConfigKeys(env.DB, userId, prefix)));
       }
       if (request.method === "GET" && segments.length === 2) {
         const configKey = decodeURIComponent(segments[1] || "");
+        ensureRemoteConfigKeyAllowed(configKey);
         let fallback;
         const fallbackParam = url.searchParams.get("fallback");
         if (fallbackParam) {
@@ -1808,12 +1816,14 @@ export async function handleApiRequest(request, env) {
       }
       if (request.method === "PUT" && segments.length === 2) {
         const configKey = decodeURIComponent(segments[1] || "");
+        ensureRemoteConfigKeyAllowed(configKey);
         const body = await readJson(request);
         await setConfig(env.DB, userId, configKey, body?.value);
         return jsonResponse(request, {});
       }
       if (request.method === "DELETE" && segments.length === 2) {
         const configKey = decodeURIComponent(segments[1] || "");
+        ensureRemoteConfigKeyAllowed(configKey);
         await removeConfig(env.DB, userId, configKey);
         return jsonResponse(request, {});
       }

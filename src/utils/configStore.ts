@@ -1,6 +1,5 @@
 import {getDataStore} from "../data/store";
-
-const runtimeStore = getDataStore();
+import {filterRemoteConfigKeys, isRemoteConfigKeyAllowed} from "./remoteConfigWhitelist";
 
 const memoryStore = new Map<string, string>();
 
@@ -54,7 +53,10 @@ export const hydrateConfigSync = (key: string, value: unknown) => {
 
 export const setConfigSync = (key: string, value: unknown) => {
   writeLocalConfigSync(key, value);
-  runtimeStore.setConfig(key, value).catch(console.error);
+  // 登录态会在运行时切换，这里必须按当前上下文动态获取 store。
+  if (isRemoteConfigKeyAllowed(key)) {
+    getDataStore().setConfig(key, value).catch(console.error);
+  }
 };
 
 export const removeConfigSync = (key: string) => {
@@ -63,7 +65,9 @@ export const removeConfigSync = (key: string) => {
     storage.removeItem(key);
   }
   memoryStore.delete(key);
-  runtimeStore.removeConfig(key).catch(console.error);
+  if (isRemoteConfigKeyAllowed(key)) {
+    getDataStore().removeConfig(key).catch(console.error);
+  }
 };
 
 export const listConfigKeysSync = (prefix?: string) => {
@@ -86,7 +90,26 @@ export const listConfigKeysSync = (prefix?: string) => {
   return keys;
 };
 
-export const getConfig = async <T>(key: string, fallback: T) => runtimeStore.getConfig(key, fallback);
-export const setConfig = async (key: string, value: unknown) => runtimeStore.setConfig(key, value);
-export const removeConfig = async (key: string) => runtimeStore.removeConfig(key);
-export const listConfigKeys = async (prefix?: string) => runtimeStore.listConfigKeys(prefix);
+export const getConfig = async <T>(key: string, fallback: T) => getDataStore().getConfig(key, fallback);
+export const setConfig = async (key: string, value: unknown) => {
+  writeLocalConfigSync(key, value);
+  if (!isRemoteConfigKeyAllowed(key)) {
+    return undefined;
+  }
+  return getDataStore().setConfig(key, value);
+};
+export const removeConfig = async (key: string) => {
+  const storage = getStorage();
+  if (storage) {
+    storage.removeItem(key);
+  }
+  memoryStore.delete(key);
+  if (!isRemoteConfigKeyAllowed(key)) {
+    return undefined;
+  }
+  return getDataStore().removeConfig(key);
+};
+export const listConfigKeys = async (prefix?: string) => {
+  const keys = await getDataStore().listConfigKeys(prefix);
+  return filterRemoteConfigKeys(keys);
+};

@@ -8,6 +8,7 @@ import fs from "fs";
 import path from "path";
 import {NodeDataStore} from "./NodeDataStore";
 import {UpdateDocumentMetaInput} from "../data/store";
+import {filterRemoteConfigKeys, isRemoteConfigKeyAllowed} from "../utils/remoteConfigWhitelist";
 
 type ServerConfig = {
   port?: number;
@@ -136,6 +137,8 @@ const signRefreshToken = (sessionId: string, expiresAt: number) => {
 const ok = (res: express.Response, data: any = {}) => res.json({errcode: 0, errmsg: "ok", data});
 const fail = (res: express.Response, errmsg = "请求失败", status = 400, errcode = 1) =>
   res.status(status).json({errcode, errmsg, data: null});
+
+const ensureRemoteConfigKeyAllowed = (key: string) => isRemoteConfigKeyAllowed(key);
 
 const parseBearer = (req: express.Request): string | null => {
   const header = req.headers.authorization || req.headers.Authorization;
@@ -405,22 +408,31 @@ async function main() {
   router.get("/config", async (req, res) => {
     const {store} = (req as any).auth as AuthContext;
     const prefix = req.query.prefix ? String(req.query.prefix) : undefined;
-    ok(res, await store.listConfigKeys(prefix));
+    ok(res, filterRemoteConfigKeys(await store.listConfigKeys(prefix)));
   });
   router.get("/config/:key", async (req, res) => {
     const {store} = (req as any).auth as AuthContext;
+    if (!ensureRemoteConfigKeyAllowed(req.params.key)) {
+      return fail(res, `unsupported config key: ${req.params.key}`);
+    }
     const fallback = req.query.fallback ? JSON.parse(String(req.query.fallback)) : undefined;
-    ok(res, await store.getConfig(req.params.key, fallback));
+    return ok(res, await store.getConfig(req.params.key, fallback));
   });
   router.put("/config/:key", async (req, res) => {
     const {store} = (req as any).auth as AuthContext;
+    if (!ensureRemoteConfigKeyAllowed(req.params.key)) {
+      return fail(res, `unsupported config key: ${req.params.key}`);
+    }
     await store.setConfig(req.params.key, req.body?.value);
-    ok(res, {});
+    return ok(res, {});
   });
   router.delete("/config/:key", async (req, res) => {
     const {store} = (req as any).auth as AuthContext;
+    if (!ensureRemoteConfigKeyAllowed(req.params.key)) {
+      return fail(res, `unsupported config key: ${req.params.key}`);
+    }
     await store.removeConfig(req.params.key);
-    ok(res, {});
+    return ok(res, {});
   });
 
   app.use(API_PREFIX, router);

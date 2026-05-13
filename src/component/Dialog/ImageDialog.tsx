@@ -42,6 +42,10 @@ class ImageDialog extends Component<any, any> {
     }
     // 重新初始化
     this.images = [];
+    if (!text) {
+      this.props.dialog.setImageOpen(false);
+      return;
+    }
     const {markdownEditor} = this.props.content;
     const cursor = markdownEditor.getCursor();
     markdownEditor.replaceSelection(text, cursor);

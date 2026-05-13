@@ -23,6 +23,10 @@ import {
   BOX_ID,
   IMAGE_HOSTING_NAMES,
   IMAGE_HOSTING_TYPE,
+  ALIOSS_IMAGE_HOSTING,
+  QINIUOSS_IMAGE_HOSTING,
+  R2_IMAGE_HOSTING,
+  SM_MS_TOKEN,
   MJX_DATA_FORMULA,
   MJX_DATA_FORMULA_TYPE,
   DEFAULT_CATEGORY_NAME,
@@ -208,6 +212,28 @@ class App extends Component<AppProps, AppState> {
       const localStore = new BrowserDataStore(0);
       await localStore.init();
       const remoteStore = getDataStore(Number(user.id) || 0);
+      const configKeysToSync = [
+        ALIOSS_IMAGE_HOSTING,
+        QINIUOSS_IMAGE_HOSTING,
+        R2_IMAGE_HOSTING,
+        SM_MS_TOKEN,
+        IMAGE_HOSTING_TYPE,
+      ];
+
+      await Promise.all(
+        configKeysToSync.map(async (key) => {
+          try {
+            const value = await localStore.getConfig(key, null);
+            if (value === null || value === undefined || value === "") {
+              return;
+            }
+            await remoteStore.setConfig(key, value);
+          } catch (e) {
+            console.error(`同步配置失败: ${key}`, e);
+          }
+        }),
+      );
+
       const localCategories = await localStore.listCategories();
       const categoryUuidMap = new Map();
       const categoryItems = localCategories
