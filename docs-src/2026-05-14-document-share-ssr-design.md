@@ -695,7 +695,7 @@ interface UpdateShareSnapshotInput {
 - 若 `snapshotVersion` 过期，返回冲突错误，拒绝覆盖当前快照
 - `html_snapshot` 强制限制在 `1MB ~ 2MB` 以内，超限返回 `413` 或 `400`
 - `title_snapshot` 强制限制在 `200` 字以内
-- `excerpt_snapshot` 强制限制在 `500` 字以内
+- `excerpt_snapshot` 强制限制在 `300` 字以内
 
 ### 12.2 公开访问接口
 

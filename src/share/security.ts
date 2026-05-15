@@ -43,6 +43,7 @@ export const SHARE_ALLOWED_TAGS = new Set([
   "section",
   "span",
   "strong",
+  "style",
   "table",
   "tbody",
   "td",
@@ -50,6 +51,33 @@ export const SHARE_ALLOWED_TAGS = new Set([
   "thead",
   "tr",
   "ul",
+  "circle",
+  "clippath",
+  "defs",
+  "desc",
+  "ellipse",
+  "foreignobject",
+  "g",
+  "image",
+  "line",
+  "lineargradient",
+  "marker",
+  "mask",
+  "metadata",
+  "path",
+  "pattern",
+  "polygon",
+  "polyline",
+  "radialgradient",
+  "rect",
+  "stop",
+  "symbol",
+  "svg",
+  "text",
+  "textpath",
+  "title",
+  "tspan",
+  "use",
 ]);
 
 export const SHARE_REMOVE_WITH_CONTENT_TAGS = new Set([
@@ -58,18 +86,182 @@ export const SHARE_REMOVE_WITH_CONTENT_TAGS = new Set([
   "noscript",
   "object",
   "script",
-  "style",
-  "svg",
   "template",
 ]);
 
-export const SHARE_GLOBAL_ATTRIBUTES = new Set(["aria-hidden", "aria-label", "class", "dir", "id", "lang", "role", "title"]);
+export const SHARE_GLOBAL_ATTRIBUTES = new Set([
+  "aria-hidden",
+  "aria-label",
+  "class",
+  "dir",
+  "id",
+  "lang",
+  "role",
+  "title",
+  "xmlns",
+]);
 
 export const SHARE_TAG_ATTRIBUTES = {
   a: new Set(["href", "rel", "target"]),
   img: new Set(["alt", "height", "src", "title", "width"]),
+  style: new Set([]),
   td: new Set(["align", "colspan", "rowspan"]),
   th: new Set(["align", "colspan", "rowspan", "scope"]),
+  circle: new Set(["cx", "cy", "fill", "fill-opacity", "r", "stroke", "stroke-width", "style", "transform"]),
+  clippath: new Set(["clipPathUnits", "id", "transform"]),
+  defs: new Set(["id"]),
+  desc: new Set(["id"]),
+  ellipse: new Set(["cx", "cy", "fill", "fill-opacity", "rx", "ry", "stroke", "stroke-width", "style", "transform"]),
+  foreignobject: new Set(["height", "id", "requiredExtensions", "style", "transform", "width", "x", "y"]),
+  g: new Set([
+    "clip-path",
+    "data-node",
+    "data-mml-node",
+    "fill",
+    "fill-opacity",
+    "id",
+    "opacity",
+    "stroke",
+    "stroke-dasharray",
+    "stroke-dashoffset",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-miterlimit",
+    "stroke-opacity",
+    "stroke-width",
+    "style",
+    "transform",
+  ]),
+  image: new Set(["height", "href", "id", "preserveAspectRatio", "style", "transform", "width", "x", "xlink:href", "y"]),
+  line: new Set([
+    "marker-end",
+    "marker-mid",
+    "marker-start",
+    "stroke",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-width",
+    "style",
+    "transform",
+    "x1",
+    "x2",
+    "y1",
+    "y2",
+  ]),
+  lineargradient: new Set(["gradientTransform", "gradientUnits", "id", "spreadMethod", "x1", "x2", "y1", "y2"]),
+  marker: new Set(["id", "markerheight", "markerunits", "markerwidth", "orient", "refx", "refy", "viewbox"]),
+  mask: new Set(["id", "maskcontentunits", "maskunits", "x", "y", "width", "height", "viewbox"]),
+  metadata: new Set(["id"]),
+  path: new Set([
+    "clip-path",
+    "d",
+    "data-mml-node",
+    "fill",
+    "fill-opacity",
+    "fill-rule",
+    "id",
+    "marker-end",
+    "marker-mid",
+    "marker-start",
+    "opacity",
+    "stroke",
+    "stroke-dasharray",
+    "stroke-dashoffset",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-miterlimit",
+    "stroke-opacity",
+    "stroke-width",
+    "style",
+    "transform",
+    "vector-effect",
+  ]),
+  pattern: new Set(["height", "id", "patterncontentunits", "patternunits", "preserveAspectRatio", "viewbox", "width", "x", "y"]),
+  polygon: new Set([
+    "fill",
+    "fill-opacity",
+    "id",
+    "marker-end",
+    "marker-mid",
+    "marker-start",
+    "points",
+    "stroke",
+    "stroke-width",
+    "style",
+    "transform",
+  ]),
+  polyline: new Set([
+    "fill",
+    "fill-opacity",
+    "id",
+    "marker-end",
+    "marker-mid",
+    "marker-start",
+    "points",
+    "stroke",
+    "stroke-width",
+    "style",
+    "transform",
+  ]),
+  radialgradient: new Set(["cx", "cy", "fr", "fx", "fy", "gradientTransform", "gradientUnits", "id", "r", "spreadMethod"]),
+  rect: new Set(["fill", "fill-opacity", "height", "id", "rx", "ry", "stroke", "stroke-width", "style", "transform", "width", "x", "y"]),
+  stop: new Set(["id", "offset", "stop-color", "stop-opacity"]),
+  symbol: new Set(["id", "preserveaspectratio", "viewbox", "x", "y"]),
+  svg: new Set([
+    "aria-hidden",
+    "aria-roledescription",
+    "focusable",
+    "height",
+    "id",
+    "preserveaspectratio",
+    "role",
+    "style",
+    "version",
+    "viewbox",
+    "width",
+    "xmlns",
+    "xmlns:xlink",
+  ]),
+  text: new Set([
+    "class",
+    "dx",
+    "dy",
+    "fill",
+    "font-family",
+    "font-size",
+    "font-style",
+    "font-weight",
+    "id",
+    "letter-spacing",
+    "opacity",
+    "style",
+    "stroke",
+    "text-anchor",
+    "transform",
+    "xml:space",
+    "x",
+    "y",
+  ]),
+  textpath: new Set(["href", "id", "lengthAdjust", "method", "side", "spacing", "startOffset", "style", "textLength", "xlink:href"]),
+  title: new Set(["id"]),
+  tspan: new Set([
+    "class",
+    "dx",
+    "dy",
+    "fill",
+    "font-family",
+    "font-size",
+    "font-style",
+    "font-weight",
+    "id",
+    "style",
+    "text-anchor",
+    "transform",
+    "xml:space",
+    "x",
+    "y",
+  ]),
+  use: new Set(["fill", "height", "href", "id", "style", "transform", "width", "x", "xlink:href", "y"]),
 } as const;
 
 export const SHARE_PASSWORD_RATE_LIMIT_RULES: Record<"share_ip" | "share" | "ip", ShareRateLimitRule> = {
@@ -215,7 +407,10 @@ export const normalizeShareUrlAttribute = (tagName: string, attrName: string, va
   const normalizedTagName = String(tagName || "").toLowerCase();
   const normalizedAttrName = String(attrName || "").toLowerCase();
   const normalizedValue = String(value || "").trim();
-  if (normalizedAttrName === "href") {
+  if (normalizedTagName === "image" && (normalizedAttrName === "href" || normalizedAttrName === "xlink:href")) {
+    return isAllowedShareImageSrc(normalizedValue) ? normalizedValue : null;
+  }
+  if (normalizedAttrName === "href" || normalizedAttrName === "xlink:href") {
     return isAllowedShareHref(normalizedValue) ? normalizedValue : null;
   }
   if (normalizedTagName === "img" && normalizedAttrName === "src") {
@@ -259,8 +454,13 @@ const parseHtmlAttributes = (raw: string): Array<{name: string; value: string}> 
 };
 
 export const SHARE_ALLOWED_STYLE_PROPERTIES = new Set([
+  "alignment-baseline",
+  "align-items",
   "background",
   "background-color",
+  "background-position",
+  "background-repeat",
+  "background-size",
   "border",
   "border-bottom",
   "border-color",
@@ -270,18 +470,23 @@ export const SHARE_ALLOWED_STYLE_PROPERTIES = new Set([
   "border-style",
   "border-top",
   "border-width",
+  "box-sizing",
   "clear",
   "color",
+  "dominant-baseline",
   "display",
   "fill",
   "float",
+  "font",
   "font-family",
   "font-size",
   "font-style",
   "font-weight",
   "height",
+  "justify-content",
   "letter-spacing",
   "line-height",
+  "left",
   "list-style-type",
   "margin",
   "margin-bottom",
@@ -299,10 +504,18 @@ export const SHARE_ALLOWED_STYLE_PROPERTIES = new Set([
   "padding-left",
   "padding-right",
   "padding-top",
+  "pointer-events",
+  "position",
+  "right",
+  "shape-rendering",
   "stroke",
+  "text-anchor",
   "text-align",
   "text-decoration",
   "text-indent",
+  "top",
+  "transform",
+  "transform-origin",
   "vertical-align",
   "white-space",
   "width",
@@ -310,11 +523,104 @@ export const SHARE_ALLOWED_STYLE_PROPERTIES = new Set([
   "word-wrap",
 ]);
 
+const SHARE_STYLE_URL_PROPERTIES = new Set(["background", "background-image"]);
+
 const hasUnsafeStyleValue = (value: string): boolean =>
   /expression\s*\(|url\s*\(|javascript:|vbscript:|data:|@import|behavior\s*:|<\/?style/i.test(value);
 
+const isAllowedShareStyleUrl = (value: string): boolean => {
+  const normalized = String(value || "").trim().replace(/^["']|["']$/g, "");
+  if (!normalized) {
+    return false;
+  }
+  if (normalized.startsWith("#")) {
+    return true;
+  }
+  if (normalized.startsWith("/") || normalized.startsWith("./") || normalized.startsWith("../")) {
+    return true;
+  }
+  return /^https?:/i.test(normalized);
+};
+
+const hasUnsafeInlineStyleValue = (propertyName: string, propertyValue: string): boolean => {
+  const decoded = decodeShareStyleEntities(propertyValue);
+  if (/expression\s*\(|javascript:|vbscript:|data:|@import|behavior\s*:|<\/?style/i.test(decoded)) {
+    return true;
+  }
+  const urlMatches = Array.from(decoded.matchAll(/url\s*\(\s*([^)]*?)\s*\)/gi));
+  if (!urlMatches.length) {
+    return false;
+  }
+  if (!SHARE_STYLE_URL_PROPERTIES.has(propertyName)) {
+    return true;
+  }
+  return urlMatches.some((match) => !isAllowedShareStyleUrl(String(match[1] || "")));
+};
+
+const hasUnsafeStyleBlockValue = (value: string): boolean =>
+  hasUnsafeStyleValue(value) ||
+  /[<>`]/.test(value) ||
+  /\bposition\s*:\s*(?:fixed|sticky)\b/i.test(value) ||
+  /(^|[,{]\s*)(?:html|body|\.page|\.article|#nice|#nice-rich-text-box)\b/i.test(value);
+
+const decodeShareStyleEntities = (value: string): string =>
+  String(value || "")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#34;/gi, "\"")
+    .replace(/&#x22;/gi, "\"")
+    .replace(/&apos;/gi, "'")
+    .replace(/&#39;/gi, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&amp;/gi, "&");
+
+const SHARE_SVG_REFERENCE_ATTRIBUTES = new Set([
+  "clip-path",
+  "fill",
+  "marker-end",
+  "marker-mid",
+  "marker-start",
+  "mask",
+  "stroke",
+]);
+
+const isLocalSvgUrlReference = (value: string): boolean => {
+  const normalized = String(value || "").trim().replace(/^["']|["']$/g, "");
+  return /^#[^"'()<>\s]+$/.test(normalized);
+};
+
+const hasUnsafeSvgReferenceValue = (tagName: string, attrName: string, value: string): boolean => {
+  if (!SHARE_TAG_ATTRIBUTES[tagName as keyof typeof SHARE_TAG_ATTRIBUTES]) {
+    return false;
+  }
+  const decoded = decodeShareStyleEntities(value);
+  if (!SHARE_SVG_REFERENCE_ATTRIBUTES.has(attrName) && !/url\s*\(/i.test(decoded)) {
+    return false;
+  }
+  if (/javascript:|vbscript:|data:/i.test(decoded)) {
+    return true;
+  }
+  const urlMatches = Array.from(decoded.matchAll(/url\s*\(\s*([^)]*?)\s*\)/gi));
+  return urlMatches.some((match) => !isLocalSvgUrlReference(String(match[1] || "")));
+};
+
+export const sanitizeShareStyleBlock = (value: string): string | null => {
+  const css = String(value || "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .trim();
+  if (!css) {
+    return null;
+  }
+  if (!/#mermaid-|\.mermaid|\.node|\.edge|\.label|\.cluster|\.flowchart/i.test(css)) {
+    return null;
+  }
+  if (hasUnsafeStyleBlockValue(css)) {
+    return null;
+  }
+  return css;
+};
+
 export const sanitizeShareInlineStyle = (value: string): string | null => {
-  const declarations = String(value || "")
+  const declarations = decodeShareStyleEntities(value)
     .split(";")
     .map((item) => item.trim())
     .filter(Boolean);
@@ -333,7 +639,10 @@ export const sanitizeShareInlineStyle = (value: string): string | null => {
     if (!SHARE_ALLOWED_STYLE_PROPERTIES.has(propertyName)) {
       continue;
     }
-    if (hasUnsafeStyleValue(propertyValue)) {
+    if (propertyName === "position" && /^(fixed|sticky)$/i.test(propertyValue)) {
+      continue;
+    }
+    if (hasUnsafeInlineStyleValue(propertyName, propertyValue)) {
       continue;
     }
     if (/[<>`]/.test(propertyValue)) {
@@ -354,7 +663,6 @@ export const sanitizeShareHtmlByStringRules = async (html: string): Promise<Shar
     stats.removedComments += commentMatches.length;
     sanitized = sanitized.replace(/<!--[\s\S]*?-->/g, "");
   }
-
   const removeBlockTagPattern = Array.from(SHARE_REMOVE_WITH_CONTENT_TAGS).join("|");
   const blockRegex = new RegExp(`<(${removeBlockTagPattern})\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>`, "gi");
   const singleRegex = new RegExp(`<(${removeBlockTagPattern})\\b[^>]*\\/?>`, "gi");
@@ -367,6 +675,15 @@ export const sanitizeShareHtmlByStringRules = async (html: string): Promise<Shar
     return "";
   });
 
+  sanitized = sanitized.replace(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi, (_full, css) => {
+    const safeCss = sanitizeShareStyleBlock(css);
+    if (!safeCss) {
+      stats.removedNodes += 1;
+      return "";
+    }
+    return `<style>${safeCss}</style>`;
+  });
+
   const tagRegex = /<\/?([a-zA-Z0-9:-]+)\b([^>]*)>/g;
   let output = "";
   let lastIndex = 0;
@@ -376,7 +693,8 @@ export const sanitizeShareHtmlByStringRules = async (html: string): Promise<Shar
     lastIndex = tagRegex.lastIndex;
 
     const rawTag = match[0];
-    const tagName = String(match[1] || "").toLowerCase();
+    const rawTagName = String(match[1] || "").trim();
+    const tagName = rawTagName.toLowerCase();
     const attrSource = match[2] || "";
     const isClosing = rawTag.startsWith("</");
     const isSelfClosing = /\/>$/.test(rawTag) || tagName === "img" || tagName === "br" || tagName === "hr";
@@ -387,21 +705,22 @@ export const sanitizeShareHtmlByStringRules = async (html: string): Promise<Shar
     }
 
     if (isClosing) {
-      output += `</${tagName}>`;
+      output += `</${rawTagName || tagName}>`;
       continue;
     }
 
     const allowedAttrs = new Set([
       ...SHARE_GLOBAL_ATTRIBUTES,
       ...Array.from(SHARE_TAG_ATTRIBUTES[tagName as keyof typeof SHARE_TAG_ATTRIBUTES] || []),
-    ]);
+    ].map((attrName) => attrName.toLowerCase()));
     const normalizedAttrs: string[] = [];
     let dropWholeTag = false;
     let anchorTarget = "";
     let anchorRel = "";
 
     for (const attr of parseHtmlAttributes(attrSource)) {
-      const attrName = String(attr.name || "").toLowerCase();
+      const rawAttrName = String(attr.name || "").trim();
+      const attrName = rawAttrName.toLowerCase();
       let attrValue = String(attr.value || "");
 
       if (attrName.startsWith("on")) {
@@ -421,7 +740,12 @@ export const sanitizeShareHtmlByStringRules = async (html: string): Promise<Shar
         stats.removedAttrs += 1;
         continue;
       }
-      if (attrName === "href" || attrName === "src") {
+      if (hasUnsafeSvgReferenceValue(tagName, attrName, attrValue)) {
+        stats.blockedUrls += 1;
+        stats.removedAttrs += 1;
+        continue;
+      }
+      if (attrName === "href" || attrName === "src" || attrName === "xlink:href") {
         const safeValue = normalizeShareUrlAttribute(tagName, attrName, attrValue);
         if (!safeValue) {
           stats.blockedUrls += 1;
@@ -445,7 +769,7 @@ export const sanitizeShareHtmlByStringRules = async (html: string): Promise<Shar
       if (tagName === "a" && attrName === "rel") {
         anchorRel = attrValue;
       }
-      normalizedAttrs.push(`${attrName}="${escapeHtmlAttribute(attrValue)}"`);
+      normalizedAttrs.push(`${rawAttrName || attrName}="${escapeHtmlAttribute(attrValue)}"`);
     }
 
     if (dropWholeTag) {
@@ -455,7 +779,9 @@ export const sanitizeShareHtmlByStringRules = async (html: string): Promise<Shar
       normalizedAttrs.push(`rel="${escapeHtmlAttribute(mergeShareAnchorRel(anchorRel))}"`);
     }
 
-    output += `<${tagName}${normalizedAttrs.length ? ` ${normalizedAttrs.join(" ")}` : ""}${isSelfClosing ? ">" : ">"}`;
+    output += `<${rawTagName || tagName}${normalizedAttrs.length ? ` ${normalizedAttrs.join(" ")}` : ""}${
+      isSelfClosing ? " />" : ">"
+    }`;
   }
 
   output += sanitized.slice(lastIndex);

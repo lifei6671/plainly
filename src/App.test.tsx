@@ -193,10 +193,26 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 it("renders without crashing with injected props", () => {
   const instance = new App(props);
   expect(() => instance.render()).not.toThrow();
   expect(instance.render()).toBeTruthy();
+});
+
+it("typesets math after the mathjax loader finishes", async () => {
+  const instance = new App(props);
+  instance.handleUpdateMathjax = jest.fn();
+  instance.initMermaid = jest.fn();
+  instance.setCustomImageHosting = jest.fn();
+  instance.loadCurrentUser = jest.fn();
+  instance.setEditorContent = jest.fn();
+
+  instance.componentDidMount();
+  await flushPromises();
+
+  expect(instance.handleUpdateMathjax).toHaveBeenCalled();
 });
 
 it("syncs local data after restoring an existing session", async () => {

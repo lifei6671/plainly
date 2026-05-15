@@ -149,6 +149,7 @@ class App extends Component<AppProps, AppState> {
       import("mathjax/es5/tex-svg-full")
         .then(() => {
           (pluginCenter as any).mathjax = true;
+          this.handleUpdateMathjax();
         })
         .catch((error) => {
           console.log(error);
@@ -547,6 +548,9 @@ class App extends Component<AppProps, AppState> {
         mermaid.initialize({
           startOnLoad: false,
           securityLevel: "strict",
+          flowchart: {
+            htmlLabels: false,
+          },
         });
         (pluginCenter as any).mermaid = true;
         this.handleUpdateMermaid();

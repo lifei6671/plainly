@@ -1,6 +1,12 @@
 import {Category, DocumentMeta, DocumentShare, SaveDocumentShareInput, UpdateDocumentMetaInput} from "../data/store/types";
 import {getDefaultListedValue, resolveListedValue} from "./policy";
-import {computeShareSnapshotHash, normalizeShareSnapshotText, validateShareSnapshotPayload,evaluateShareSnapshotUpdate} from "./snapshot";
+import {
+  SHARE_EXCERPT_SNAPSHOT_MAX_CHARS,
+  computeShareSnapshotHash,
+  evaluateShareSnapshotUpdate,
+  normalizeShareSnapshotText,
+  validateShareSnapshotPayload,
+} from "./snapshot";
 import {
   DocumentSettingsPayload,
   DocumentShareSettings,
@@ -193,7 +199,10 @@ export const prepareSnapshotUpdate = async (input: {
   }
 
   const titleSnapshot = normalizeShareSnapshotText(input.snapshotInput.titleSnapshot, 200);
-  const excerptSnapshot = normalizeShareSnapshotText(input.snapshotInput.excerptSnapshot, 500);
+  const excerptSnapshot = normalizeShareSnapshotText(
+    input.snapshotInput.excerptSnapshot,
+    SHARE_EXCERPT_SNAPSHOT_MAX_CHARS,
+  );
   const validationErrors = validateShareSnapshotPayload({
     htmlSnapshot: input.snapshotInput.htmlSnapshot,
     titleSnapshot,

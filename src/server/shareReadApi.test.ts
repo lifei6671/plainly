@@ -245,7 +245,8 @@ describe("public share read routes", () => {
       expect(articlePage.status).toBe(200);
       expect(articlePage.text).toContain("公开文章");
       expect(articlePage.text).toContain(`/read/${encodeURIComponent(shareId)}/assets/uploads%2Fhello.txt`);
-      expect(String(articlePage.headers["content-security-policy"] || "")).toContain("script-src 'none'");
+      expect(String(articlePage.headers["content-security-policy"] || "")).toContain("script-src 'sha256-");
+      expect(String(articlePage.headers["content-security-policy"] || "")).not.toContain("script-src 'unsafe-inline'");
       expect(articlePage.headers["cache-control"]).toBe("public, max-age=60, must-revalidate");
 
       const contentJson = await requestJson({

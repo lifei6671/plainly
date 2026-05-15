@@ -14,7 +14,7 @@ const asBufferSource = (value: Uint8Array): BufferSource => value as unknown as 
 
 export const SHARE_HTML_SNAPSHOT_MAX_BYTES = 2 * 1024 * 1024;
 export const SHARE_TITLE_SNAPSHOT_MAX_CHARS = 200;
-export const SHARE_EXCERPT_SNAPSHOT_MAX_CHARS = 500;
+export const SHARE_EXCERPT_SNAPSHOT_MAX_CHARS = 300;
 
 const getWebCrypto = () => {
   if (!globalThis.crypto || !globalThis.crypto.subtle) {

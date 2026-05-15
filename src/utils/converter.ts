@@ -10,7 +10,32 @@ import {
   MJX_DATA_FORMULA,
 } from "./constant";
 
-const MERMAID_SVG_STYLE_PROPS = [
+const SVG_STYLE_PROPS = [
+  "display",
+  "position",
+  "left",
+  "right",
+  "top",
+  "bottom",
+  "width",
+  "height",
+  "max-width",
+  "min-width",
+  "max-height",
+  "min-height",
+  "box-sizing",
+  "justify-content",
+  "align-items",
+  "padding",
+  "padding-top",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+  "margin",
+  "margin-top",
+  "margin-right",
+  "margin-bottom",
+  "margin-left",
   "fill",
   "fill-opacity",
   "stroke",
@@ -25,6 +50,7 @@ const MERMAID_SVG_STYLE_PROPS = [
   "font-size",
   "font-weight",
   "font-style",
+  "line-height",
   "color",
   "opacity",
   "text-anchor",
@@ -33,13 +59,44 @@ const MERMAID_SVG_STYLE_PROPS = [
   "alignment-baseline",
   "letter-spacing",
   "word-spacing",
+  "word-break",
+  "overflow-wrap",
+  "white-space",
+  "overflow",
   "background-color",
+  "background",
+  "border",
+  "border-radius",
   "shape-rendering",
+  "transform",
+  "transform-origin",
   "marker-start",
   "marker-mid",
   "marker-end",
   "pointer-events",
+  "vertical-align",
 ];
+
+const inlineComputedStyles = (nodes, styleProps) => {
+  nodes.forEach((node) => {
+    if (node.nodeType !== 1) {
+      return;
+    }
+    const computed = window.getComputedStyle(node);
+    const parts = [];
+    styleProps.forEach((prop) => {
+      const value = computed.getPropertyValue(prop);
+      if (value) {
+        parts.push(`${prop}:${value}`);
+      }
+    });
+    if (parts.length) {
+      const existing = node.getAttribute("style");
+      const merged = existing ? `${existing};${parts.join(";")}` : parts.join(";");
+      node.setAttribute("style", merged);
+    }
+  });
+};
 
 const inlineMermaidSvgStyles = (root) => {
   if (!root) {
@@ -48,26 +105,18 @@ const inlineMermaidSvgStyles = (root) => {
   const svgs = root.querySelectorAll(".mermaid svg");
   svgs.forEach((svg) => {
     const nodes = [svg, ...svg.querySelectorAll("*")];
-    nodes.forEach((node) => {
-      if (node.nodeType !== 1) {
-        return;
-      }
-      const computed = window.getComputedStyle(node);
-      const parts = [];
-      MERMAID_SVG_STYLE_PROPS.forEach((prop) => {
-        const value = computed.getPropertyValue(prop);
-        if (value) {
-          parts.push(`${prop}:${value}`);
-        }
-      });
-      if (parts.length) {
-        const existing = node.getAttribute("style");
-        const merged = existing ? `${existing};${parts.join(";")}` : parts.join(";");
-        node.setAttribute("style", merged);
-      }
-    });
-    svg.querySelectorAll("style").forEach((styleNode) => styleNode.remove());
+    inlineComputedStyles(nodes, SVG_STYLE_PROPS);
   });
+};
+
+const inlineMathSvgStyles = (root) => {
+  if (!root) {
+    return;
+  }
+  const mathNodes = root.querySelectorAll(
+    ".span-inline-equation, .span-block-equation, .inline-equation, .block-equation, mjx-container, .inline-equation svg, .block-equation svg, mjx-container svg",
+  );
+  inlineComputedStyles(Array.from(mathNodes), SVG_STYLE_PROPS);
 };
 
 export const solveWeChatMath = () => {
@@ -164,6 +213,7 @@ export const solveHtml = () => {
     return "";
   }
   inlineMermaidSvgStyles(element);
+  inlineMathSvgStyles(element);
 
   const inner = element.children[0].children;
   for (const item of inner) {

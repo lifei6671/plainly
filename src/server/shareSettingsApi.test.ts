@@ -200,7 +200,6 @@ describe("document share settings api", () => {
             enabled: true,
             accessType: "public",
             durationType: "permanent",
-            listed: true,
             regenerateShareId: true,
           },
         },

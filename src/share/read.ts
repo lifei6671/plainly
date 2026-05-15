@@ -24,8 +24,11 @@ export const SHARE_PAGE_BROWSER_CACHE_CONTROL = "public, max-age=60, must-revali
 export const SHARE_PRIVATE_CACHE_CONTROL = "private, no-store";
 export const SHARE_CDN_SHORT_CACHE_CONTROL = "public, max-age=60";
 export const SHARE_CDN_LONG_CACHE_CONTROL = "public, max-age=604800";
+const SHARE_OUTLINE_SCRIPT = `(function(){var outline=document.querySelector(".article-outline");if(!outline)return;var links=Array.prototype.slice.call(outline.querySelectorAll(".article-outline__link"));if(!links.length)return;var headings=links.map(function(link){return document.getElementById(link.getAttribute("data-outline-target")||"");}).filter(Boolean);var railFill=outline.querySelector(".article-outline__rail-fill");var nav=outline.querySelector(".article-outline__nav");function setActive(id){links.forEach(function(link){var active=link.getAttribute("data-outline-target")===id;link.classList.toggle("is-active",active);if(active){link.setAttribute("aria-current","location");}else{link.removeAttribute("aria-current");}});var activeLink=outline.querySelector('.article-outline__link[data-outline-target="'+id+'"]');if(!activeLink||!railFill||!nav)return;var item=activeLink.parentElement;if(!item)return;var navRect=nav.getBoundingClientRect();var itemRect=item.getBoundingClientRect();railFill.style.transform="translateY("+Math.max(0,itemRect.top-navRect.top)+"px)";railFill.style.height=itemRect.height+"px";}function update(){var activeId=headings[0]&&headings[0].id;if(!activeId)return;for(var i=0;i<headings.length;i+=1){if(headings[i].getBoundingClientRect().top<=96){activeId=headings[i].id;}else{break;}}setActive(activeId);}var ticking=false;function requestUpdate(){if(ticking)return;ticking=true;window.requestAnimationFrame(function(){ticking=false;update();});}window.addEventListener("scroll",requestUpdate,{passive:true});window.addEventListener("resize",requestUpdate);update();})();`;
+const SHARE_OUTLINE_SCRIPT_HASH = "2/oaTb9HCThElApxRBBnPcVYSsoIV96oypmqxAynEJA=";
+
 export const SHARE_READ_CSP =
-  "default-src 'none'; img-src 'self' https: http: data:; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; script-src 'none'";
+  `default-src 'none'; img-src 'self' https: http: data:; style-src 'self' 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; script-src 'sha256-${SHARE_OUTLINE_SCRIPT_HASH}'`;
 export const SHARE_REFERRER_POLICY = "strict-origin-when-cross-origin";
 
 const toMillis = (value: TimestampValue | null | undefined): number | null => {
@@ -117,14 +120,123 @@ const buildRobotsMeta = (robots: ShareRobotsDirective): string => `<meta name="r
 
 const hasExportedPreviewShell = (html: string): boolean => /id=(["'])nice-rich-text-box\1/i.test(String(html || ""));
 
+interface ShareOutlineItem {
+  level: number;
+  id: string;
+  text: string;
+}
+
+const HEADING_TAG_PATTERN = /<h([1-6])\b([^>]*)>([\s\S]*?)<\/h\1>/gi;
+const HEADING_ID_PATTERN = /\sid\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i;
+
+const decodeShareHtmlEntities = (value: string): string =>
+  value
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      const codePoint = Number.parseInt(hex, 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&#(\d+);/g, (_, decimal) => {
+      const codePoint = Number.parseInt(decimal, 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+
+const getHeadingText = (html: string): string =>
+  decodeShareHtmlEntities(
+    html
+      .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+      .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/\s+/g, " ")
+      .trim(),
+  );
+
+const getHeadingId = (attributes: string): string => {
+  const match = attributes.match(HEADING_ID_PATTERN);
+  return (match?.[2] || match?.[3] || match?.[4] || "").trim();
+};
+
+const buildUniqueHeadingId = (candidate: string, fallback: string, usedIds: Set<string>): string => {
+  const base =
+    (candidate || fallback)
+      .trim()
+      .replace(/[\u0000-\u001f"'<>\s]+/g, "-")
+      .replace(/^-+|-+$/g, "") || fallback;
+  let id = base;
+  let index = 2;
+  while (usedIds.has(id)) {
+    id = `${base}-${index}`;
+    index += 1;
+  }
+  usedIds.add(id);
+  return id;
+};
+
+const setHeadingId = (attributes: string, id: string): string => {
+  const safeId = escapeShareHtmlText(id);
+  if (HEADING_ID_PATTERN.test(attributes)) {
+    return attributes.replace(HEADING_ID_PATTERN, ` id="${safeId}"`);
+  }
+  return `${attributes} id="${safeId}"`;
+};
+
+const buildShareOutline = (html: string): {html: string; outline: ShareOutlineItem[]} => {
+  const outline: ShareOutlineItem[] = [];
+  const usedIds = new Set<string>();
+  let headingIndex = 0;
+  const nextHtml = String(html || "").replace(
+    HEADING_TAG_PATTERN,
+    (full: string, levelRaw: string, attributes: string, innerHtml: string) => {
+      const text = getHeadingText(innerHtml);
+      if (!text) return full;
+      headingIndex += 1;
+      const id = buildUniqueHeadingId(getHeadingId(attributes), `share-heading-${headingIndex}`, usedIds);
+      outline.push({
+        level: Number(levelRaw),
+        id,
+        text,
+      });
+      return `<h${levelRaw}${setHeadingId(attributes, id)}>${innerHtml}</h${levelRaw}>`;
+    },
+  );
+  return {html: nextHtml, outline};
+};
+
+const renderShareOutline = (outline: ShareOutlineItem[]): string => {
+  if (outline.length < 2) return "";
+  const items = outline
+    .map(
+      (item) => `<li class="article-outline__item article-outline__item--level-${item.level}">
+        <a class="article-outline__link" href="#${escapeShareHtmlText(item.id)}" data-outline-target="${escapeShareHtmlText(item.id)}">${escapeShareHtmlText(item.text)}</a>
+      </li>`,
+    )
+    .join("");
+  return `<aside class="article-outline" aria-label="文章大纲">
+    <div class="article-outline__inner">
+      <p class="article-outline__title">大纲</p>
+      <nav class="article-outline__nav">
+        <span class="article-outline__rail" aria-hidden="true"><span class="article-outline__rail-fill"></span></span>
+        <ol class="article-outline__list">${items}</ol>
+      </nav>
+    </div>
+  </aside>`;
+};
+
 const buildBaseHtml = (input: {
   title: string;
   description?: string | null;
   robots: ShareRobotsDirective;
   body: string;
+  pageClassName?: string;
 }): string => {
   const title = escapeShareHtmlText(input.title);
   const description = escapeShareHtmlText(input.description || "");
+  const pageClassName = input.pageClassName ? `page ${escapeShareHtmlText(input.pageClassName)}` : "page";
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -160,6 +272,9 @@ const buildBaseHtml = (input: {
       max-width: 920px;
       margin: 0 auto;
       padding: 32px 18px 64px;
+    }
+    .page--read {
+      max-width: 1180px;
     }
     .hero {
       margin-bottom: 24px;
@@ -240,10 +355,101 @@ const buildBaseHtml = (input: {
       background: var(--paper);
       box-shadow: 0 14px 38px rgba(44, 35, 22, 0.08);
     }
+    .article h1,
+    .article h2,
+    .article h3,
+    .article h4,
+    .article h5,
+    .article h6 {
+      scroll-margin-top: 28px;
+    }
     .article--preview-export {
       padding: 20px;
-      overflow: hidden;
+      overflow: visible;
     }
+    .read-layout {
+      display: block;
+    }
+    .read-layout--with-outline {
+      display: grid;
+      grid-template-columns: minmax(0, 920px) 220px;
+      gap: 18px;
+      align-items: start;
+      justify-content: center;
+    }
+    .read-layout--with-outline .article {
+      min-width: 0;
+    }
+    .article-outline {
+      position: sticky;
+      top: 24px;
+      align-self: start;
+    }
+    .article-outline__inner {
+      max-height: calc(100vh - 48px);
+      overflow: auto;
+      padding: 8px 0 8px 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .article-outline__title {
+      margin: 0 0 10px;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+    }
+    .article-outline__nav {
+      position: relative;
+    }
+    .article-outline__rail {
+      position: absolute;
+      left: -14px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      border-radius: 999px;
+      background: rgba(164, 74, 47, 0.18);
+    }
+    .article-outline__rail-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 0;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: transform 180ms ease, height 180ms ease;
+    }
+    .article-outline__list {
+      display: grid;
+      gap: 4px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .article-outline__link {
+      display: block;
+      border-radius: 10px;
+      padding: 4px 8px;
+      color: inherit;
+      text-decoration: none;
+      transition: color 160ms ease, background-color 160ms ease;
+    }
+    .article-outline__link:hover,
+    .article-outline__link.is-active {
+      color: var(--accent);
+      background: var(--accent-soft);
+      text-decoration: none;
+    }
+    .article-outline__link.is-active {
+      font-weight: 700;
+    }
+    .article-outline__item--level-3 .article-outline__link { padding-left: 18px; }
+    .article-outline__item--level-4 .article-outline__link { padding-left: 28px; }
+    .article-outline__item--level-5 .article-outline__link { padding-left: 38px; }
+    .article-outline__item--level-6 .article-outline__link { padding-left: 48px; }
     .article-body {
       font-size: 17px;
       line-height: 1.9;
@@ -259,6 +465,20 @@ const buildBaseHtml = (input: {
       max-width: 100%;
       margin: 0 auto;
     }
+    .article-preview-export .mermaid {
+      overflow-x: auto;
+      overflow-y: visible;
+    }
+    .article-preview-export svg {
+      max-width: 100%;
+      overflow: visible;
+    }
+    .article-preview-export .span-inline-equation,
+    .article-preview-export .span-block-equation,
+    .article-preview-export .inline-equation,
+    .article-preview-export .block-equation {
+      overflow: visible;
+    }
     .article-preview-export img {
       max-width: 100%;
       height: auto;
@@ -273,6 +493,8 @@ const buildBaseHtml = (input: {
     }
     .article-body pre {
       overflow: auto;
+    }
+    .article-body pre:not(.custom):not(.code-snippet__js) {
       padding: 14px;
       border-radius: 14px;
       background: #1e1a17;
@@ -338,10 +560,15 @@ const buildBaseHtml = (input: {
       .hero, .article, .card { padding: 20px; border-radius: 18px; }
       .article-body { font-size: 16px; }
     }
+    @media (max-width: 1100px) {
+      .page--read { max-width: 920px; }
+      .read-layout--with-outline { display: block; }
+      .article-outline { display: none; }
+    }
   </style>
 </head>
 <body>
-  <main class="page">
+  <main class="${pageClassName}">
     ${input.body}
   </main>
 </body>
@@ -455,7 +682,10 @@ export const renderShareDocumentPage = (input: {
   const title = input.share.titleSnapshot || input.meta.name || "未命名文档";
   const excerpt = input.share.excerptSnapshot || "公开阅读页面";
   const contentHtml = rewriteShareAssetUrls(String(input.share.htmlSnapshot || ""), input.share.shareId);
-  const usesPreviewShell = hasExportedPreviewShell(contentHtml);
+  const outlinedContent = buildShareOutline(contentHtml);
+  const outlineHtml = renderShareOutline(outlinedContent.outline);
+  const hasOutline = outlineHtml.length > 0;
+  const usesPreviewShell = hasExportedPreviewShell(outlinedContent.html);
   const labels = getShareLabels(input.share)
     .map((label) => `<span class="tag">${escapeShareHtmlText(label)}</span>`)
     .join("");
@@ -466,6 +696,7 @@ export const renderShareDocumentPage = (input: {
     title,
     description: excerpt,
     robots: input.robots,
+    pageClassName: "page--read",
     body: `<section class="hero">
   <p class="eyebrow">${input.shellMode ? "Controlled Read" : "Public Read"}</p>
   <h1 class="title">${escapeShareHtmlText(title)}</h1>
@@ -476,13 +707,17 @@ export const renderShareDocumentPage = (input: {
   </div>
   ${shellNotice}
 </section>
+<div class="read-layout${hasOutline ? " read-layout--with-outline" : ""}">
 <article class="article${usesPreviewShell ? " article--preview-export" : ""}">
   ${
     usesPreviewShell
-      ? `<div class="article-preview-export">${contentHtml}</div>`
-      : `<div class="article-body">${contentHtml}</div>`
+      ? `<div class="article-preview-export">${outlinedContent.html}</div>`
+      : `<div class="article-body">${outlinedContent.html}</div>`
   }
-</article>`,
+</article>
+${outlineHtml}
+</div>
+${hasOutline ? `<script>${SHARE_OUTLINE_SCRIPT}</script>` : ""}`,
   });
 };
 
