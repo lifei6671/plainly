@@ -15,7 +15,7 @@ class RenameFile extends Component<any, any> {
       <div id="nice-menu-rename-file" className="nice-menu-item" onClick={this.handleClick}>
         <span>
           <span className="nice-menu-flag" />
-          <span className="nice-menu-name">重命名文档</span>
+          <span className="nice-menu-name">文档设置</span>
         </span>
       </div>
     );

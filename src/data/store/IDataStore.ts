@@ -12,6 +12,7 @@ import {
   TimestampValue,
   UpdateDocumentMetaInput,
 } from "./types";
+import {DocumentSettingsPayload, UpdateDocumentSettingsInput, UpdateShareSnapshotInput, UpdateShareSnapshotResponse} from "../../share";
 
 export interface IDataStore {
   init(): Promise<void>;
@@ -28,7 +29,10 @@ export interface IDataStore {
   batchCreateDocuments(items: BatchCreateDocumentInput[]): Promise<BatchCreateDocumentsResponse>;
   getDocumentMeta(documentId: string): Promise<DocumentMeta | null>;
   getRenameData(documentId: string): Promise<RenameDocumentPayload>;
+  getDocumentSettings(documentId: string): Promise<DocumentSettingsPayload>;
   updateDocumentMeta(documentId: string, updates: UpdateDocumentMetaInput): Promise<void>;
+  updateDocumentSettings(documentId: string, input: UpdateDocumentSettingsInput): Promise<DocumentSettingsPayload>;
+  updateShareSnapshot(documentId: string, input: UpdateShareSnapshotInput): Promise<UpdateShareSnapshotResponse>;
   listDocumentsPage(
     offset: number,
     limit: number,
@@ -65,3 +69,4 @@ export type {
   RenameDocumentPayload,
   UpdateDocumentMetaInput,
 };
+export type {DocumentSettingsPayload, UpdateDocumentSettingsInput, UpdateShareSnapshotInput, UpdateShareSnapshotResponse};

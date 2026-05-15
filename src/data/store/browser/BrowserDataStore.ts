@@ -17,6 +17,7 @@ import {
   UpdateDocumentMetaInput,
 } from "../types";
 import {IDataStore} from "../IDataStore";
+import {DocumentSettingsPayload, UpdateDocumentSettingsInput, UpdateShareSnapshotInput, UpdateShareSnapshotResponse} from "../../../share";
 
 type CategoriesByUuid = Map<string, Category>;
 type CategoriesByName = Map<string, string>;
@@ -993,6 +994,15 @@ export class BrowserDataStore implements IDataStore {
     return {meta, categories};
   }
 
+  async getDocumentSettings(documentUuid: string): Promise<DocumentSettingsPayload> {
+    const [meta, categories] = await Promise.all([this.getDocumentMeta(documentUuid), this.listCategories()]);
+    return {
+      meta,
+      categories,
+      share: null,
+    };
+  }
+
   async updateDocumentMeta(documentUuid: string, updates: UpdateDocumentMetaInput): Promise<void> {
     const db = await this.getDb();
     await this.ensureDefaultCategory(db);
@@ -1091,6 +1101,20 @@ export class BrowserDataStore implements IDataStore {
       transaction.oncomplete = () => resolve();
       transaction.onerror = (event) => reject(event);
     });
+  }
+
+  async updateDocumentSettings(documentUuid: string, input: UpdateDocumentSettingsInput): Promise<DocumentSettingsPayload> {
+    const metaUpdates = input?.meta || {};
+    await this.updateDocumentMeta(documentUuid, {
+      name: metaUpdates.name,
+      category_id: metaUpdates.category_id,
+      updatedAt: new Date(),
+    });
+    return this.getDocumentSettings(documentUuid);
+  }
+
+  async updateShareSnapshot(_documentUuid: string, _input: UpdateShareSnapshotInput): Promise<UpdateShareSnapshotResponse> {
+    return {share: null};
   }
 
   /**

@@ -1,6 +1,51 @@
 import MarkdownIt from "markdown-it";
 import {SQLiteTables as SQLITE_TABLES, SQLiteDDL as SQLITE_DDL} from "./schema.generated.js";
 import {filterRemoteConfigKeys, isRemoteConfigKeyAllowed} from "../src/utils/remoteConfigWhitelist";
+import {runSharePbkdf2WorkerPoC} from "./sharePbkdf2PoC";
+import {runShareSanitizeWorkerPoC, sanitizeShareHtmlForWorkerPoC} from "./shareSanitizePoC";
+import {
+  SHARE_ACCESS_COOKIE_TTL_SECONDS,
+  SHARE_CDN_LONG_CACHE_CONTROL,
+  SHARE_CDN_SHORT_CACHE_CONTROL,
+  SHARE_LIST_CACHE_CONTROL,
+  SHARE_LIST_CDN_CACHE_CONTROL,
+  SHARE_LIST_VARIANT_CACHE_CONTROL,
+  SHARE_LIST_VARIANT_CDN_CACHE_CONTROL,
+  SHARE_PAGE_BROWSER_CACHE_CONTROL,
+  SHARE_PASSWORD_RATE_LIMIT_RULES,
+  SHARE_PRIVATE_CACHE_CONTROL,
+  SHARE_READ_CSP,
+  SHARE_REFERRER_POLICY,
+  buildShareCachePurgeUrls,
+  buildShareAccessCookie,
+  buildShareContentPayload,
+  buildSharePasswordRateLimitKeys,
+  collectShareCachePathsForSettingsChange,
+  collectShareCachePathsForSnapshotUpdate,
+  createCloudflareShareCachePurger,
+  shouldCacheShareListVariant,
+  evaluateShareAccess,
+  evaluateShareRateLimit,
+  getShareAccessCookieName,
+  buildDocumentSettingsPayload,
+  buildMetaUpdateInput,
+  buildShareSaveInput,
+  normalizeShareAssetId,
+  normalizeShareListPageParams,
+  recordShareRateLimitFailure,
+  renderShareDocumentPage,
+  renderShareListPage,
+  renderSharePasswordPage,
+  renderShareStatusPage,
+  shouldUseLongShareCdnCache,
+  signShareAccessToken,
+  extractShareAssetIdsFromHtml,
+  hashSharePassword,
+  prepareSnapshotUpdate,
+  serializeDocumentShareSettings,
+  verifyShareAccessToken,
+  verifySharePassword,
+} from "../src/share";
 
 const DEFAULT_API_PREFIX = "/api";
 const ACCESS_COOKIE = "plainly_at";
@@ -11,6 +56,7 @@ const DEFAULT_CATEGORY_ID = 1;
 const DEFAULT_CATEGORY_UUID = "00000000000000000000000000000001";
 const DEFAULT_CATEGORY_NAME = "默认目录";
 const MIGRATION_USER_ID = 1;
+const sharePasswordRateLimitState = new Map();
 
 type CookieOptions = {
   maxAge?: number;
@@ -76,6 +122,11 @@ const normalizeUuid = (value) => {
   if (!value) return "";
   return String(value).trim().replace(/-/g, "");
 };
+
+const generateShareId = () =>
+  base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)))
+    .replace(/=+$/g, "")
+    .trim();
 
 const bytesToHex = (bytes: Uint8Array) =>
   Array.from(bytes)
@@ -207,12 +258,52 @@ const mapUser = (row) => ({
   tokenVersion: row.token_version ?? 1,
 });
 
+const mapDocumentShare = (row) => ({
+  id: toNumber(row.id),
+  documentId: row.document_id,
+  shareId: row.share_id,
+  enabled: Boolean(toNumber(row.enabled, 0)),
+  listed: Boolean(toNumber(row.listed, 0)),
+  accessType: row.access_type,
+  durationType: row.duration_type,
+  startAt: row.start_at ?? null,
+  endAt: row.end_at ?? null,
+  passwordHash: row.password_hash ?? null,
+  passwordSalt: row.password_salt ?? null,
+  passwordAlgo: row.password_algo ?? null,
+  passwordVersion: row.password_version ?? null,
+  htmlSnapshot: row.html_snapshot ?? null,
+  titleSnapshot: row.title_snapshot ?? null,
+  excerptSnapshot: row.excerpt_snapshot ?? null,
+  snapshotVersion: row.snapshot_version ?? null,
+  snapshotHash: row.snapshot_hash ?? null,
+  lastSnapshotAt: row.last_snapshot_at ?? null,
+  createdAt: toNumber(row.created_at),
+  updatedAt: toNumber(row.updated_at),
+  uid: toNumber(row.user_id),
+});
+
+const mapDocumentShareAsset = (row) => ({
+  id: toNumber(row.id),
+  documentId: row.document_id,
+  assetId: row.asset_id,
+  snapshotHash: row.snapshot_hash,
+  updatedAt: toNumber(row.updated_at),
+  uid: toNumber(row.user_id),
+});
+
 const readJson = async (request) => {
   try {
     return await request.json();
   } catch (_e) {
     return {};
   }
+};
+
+const getShareErrorMessage = (value) => {
+  if (value === "password") return "密码错误，请重试。";
+  if (value === "expired") return "访问凭证已过期，请重新输入密码。";
+  return null;
 };
 
 const parseCookies = (header) => {
@@ -261,6 +352,24 @@ const errorResponse = (request, errmsg = "请求失败", status = 400, errcode =
   headers.set("Content-Type", "application/json");
   cookies.forEach((cookie) => headers.append("Set-Cookie", cookie));
   return new Response(JSON.stringify({errcode, errmsg, data: null}), {status, headers});
+};
+
+const htmlResponse = (request, html, status = 200, headersInit) => {
+  const headers = new Headers(headersInit || {});
+  headers.set("Content-Type", "text/html; charset=utf-8");
+  headers.set("Content-Security-Policy", SHARE_READ_CSP);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", SHARE_REFERRER_POLICY);
+  return new Response(html, {status, headers});
+};
+
+const assetResponseHeaders = (cacheControl, cdnCacheControl) => {
+  const headers = new Headers();
+  headers.set("Cache-Control", cacheControl);
+  headers.set("CDN-Cache-Control", cdnCacheControl);
+  headers.set("Referrer-Policy", SHARE_REFERRER_POLICY);
+  headers.set("X-Content-Type-Options", "nosniff");
+  return headers;
 };
 
 const normalizeApiPrefix = (value) => {
@@ -730,6 +839,8 @@ const ensureSchema = async (db) => {
     await runStatements(db, SQLITE_DDL.documents);
     await runStatements(db, SQLITE_DDL.documentContent);
     await runStatements(db, SQLITE_DDL.settings);
+    await runStatements(db, SQLITE_DDL.documentShares);
+    await runStatements(db, SQLITE_DDL.documentShareAssets);
 
     const usersInfo = await tableInfo(db, SQLITE_TABLES.users);
     if (!usersInfo.some((c) => c.name === "password_salt")) {
@@ -783,6 +894,18 @@ const ensureSchema = async (db) => {
     );
     await runStatements(db, `CREATE INDEX IF NOT EXISTS idx_settings_user ON ${SQLITE_TABLES.settings}(user_id);`);
     await runStatements(db, `CREATE INDEX IF NOT EXISTS idx_sessions_user ON ${SQLITE_TABLES.sessions}(user_id);`);
+    await runStatements(db, `CREATE INDEX IF NOT EXISTS idx_documents_created_at ON ${SQLITE_TABLES.documents}(created_at DESC);`);
+    await runStatements(db, `CREATE INDEX IF NOT EXISTS idx_document_shares_document ON ${SQLITE_TABLES.documentShares}(document_id);`);
+    await runStatements(
+      db,
+      `CREATE INDEX IF NOT EXISTS idx_document_shares_list
+       ON ${SQLITE_TABLES.documentShares}(enabled, listed, access_type, duration_type, start_at, end_at);`,
+    );
+    await runStatements(
+      db,
+      `CREATE INDEX IF NOT EXISTS idx_document_share_assets_document
+       ON ${SQLITE_TABLES.documentShareAssets}(document_id, snapshot_hash);`,
+    );
 
     // 回填缺失的 content_norm，确保 LIKE 搜索可用
     const rows = await dbAll(
@@ -829,6 +952,221 @@ const getUserById = async (db, userId) =>
 
 const getUserByAccount = async (db, account) =>
   dbFirst(db, `SELECT * FROM ${SQLITE_TABLES.users} WHERE account = ?`, [account]);
+
+const getDocumentRowByDocumentId = async (db, userId, documentId) =>
+  dbFirst(db, `SELECT * FROM ${SQLITE_TABLES.documents} WHERE user_id = ? AND document_id = ?`, [userId, documentId]);
+
+const getDocumentShareByDocumentId = async (db, userId, documentId) => {
+  const row = await dbFirst(
+    db,
+    `SELECT * FROM ${SQLITE_TABLES.documentShares} WHERE user_id = ? AND document_id = ?`,
+    [userId, documentId],
+  );
+  return row ? mapDocumentShare(row) : null;
+};
+
+const getDocumentShareByShareId = async (db, shareId) => {
+  const row = await dbFirst(db, `SELECT * FROM ${SQLITE_TABLES.documentShares} WHERE share_id = ?`, [shareId]);
+  return row ? mapDocumentShare(row) : null;
+};
+
+const getPublicDocumentShare = async (db, shareId) => {
+  const share = await getDocumentShareByShareId(db, shareId);
+  if (!share) return null;
+  const row = await dbFirst(
+    db,
+    `SELECT * FROM ${SQLITE_TABLES.documents} WHERE user_id = ? AND document_id = ?`,
+    [share.uid, share.documentId],
+  );
+  if (!row) return null;
+  return {
+    share,
+    meta: mapDoc(row),
+  };
+};
+
+const listPublicDocumentShares = async (db, page, pageSize, nowMs = Date.now()) => {
+  const offset = Math.max(0, (page - 1) * pageSize);
+  const countRow = await dbFirst(
+    db,
+    `SELECT COUNT(1) AS total
+     FROM ${SQLITE_TABLES.documentShares} s
+     INNER JOIN ${SQLITE_TABLES.documents} d
+       ON d.user_id = s.user_id AND d.document_id = s.document_id
+     WHERE s.enabled = 1
+       AND s.listed = 1
+       AND (
+         s.duration_type <> 'range'
+         OR ((s.start_at IS NULL OR s.start_at <= ?) AND (s.end_at IS NULL OR s.end_at >= ?))
+       )`,
+    [nowMs, nowMs],
+  );
+  const rows = await dbAll(
+    db,
+    `SELECT
+       s.*,
+       d.document_id AS doc_document_id,
+       d.name AS doc_name,
+       d.category_id AS doc_category_id,
+       d.created_at AS doc_created_at,
+       d.updated_at AS doc_updated_at,
+       d.char_count AS doc_char_count,
+       d.source AS doc_source,
+       d.version AS doc_version
+     FROM ${SQLITE_TABLES.documentShares} s
+     INNER JOIN ${SQLITE_TABLES.documents} d
+       ON d.user_id = s.user_id AND d.document_id = s.document_id
+     WHERE s.enabled = 1
+       AND s.listed = 1
+       AND (
+         s.duration_type <> 'range'
+         OR ((s.start_at IS NULL OR s.start_at <= ?) AND (s.end_at IS NULL OR s.end_at >= ?))
+       )
+     ORDER BY d.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [nowMs, nowMs, pageSize, offset],
+  );
+  return {
+    items: rows.map((row) => ({
+      share: mapDocumentShare(row),
+      meta: mapDoc({
+        id: 0,
+        user_id: row.user_id,
+        document_id: row.doc_document_id,
+        name: row.doc_name,
+        category: 0,
+        category_id: row.doc_category_id,
+        created_at: row.doc_created_at,
+        updated_at: row.doc_updated_at,
+        char_count: row.doc_char_count,
+        source: row.doc_source,
+        version: row.doc_version,
+      }),
+    })),
+    page,
+    pageSize,
+    total: Number(countRow?.total || 0),
+  };
+};
+
+const hasPublicDocumentShareAsset = async (db, shareId, assetId) => {
+  const row = await dbFirst(
+    db,
+    `SELECT a.id
+     FROM ${SQLITE_TABLES.documentShareAssets} a
+     INNER JOIN ${SQLITE_TABLES.documentShares} s
+       ON s.user_id = a.user_id AND s.document_id = a.document_id
+     WHERE s.share_id = ? AND a.asset_id = ?
+     LIMIT 1`,
+    [shareId, assetId],
+  );
+  return Boolean(row?.id);
+};
+
+const saveDocumentShare = async (db, userId, input) => {
+  const documentId = String(input.documentId || "");
+  const documentRow = await getDocumentRowByDocumentId(db, userId, documentId);
+  if (!documentRow) {
+    throw new Error(`document not found: ${documentId}`);
+  }
+  const existing = await dbFirst(
+    db,
+    `SELECT * FROM ${SQLITE_TABLES.documentShares} WHERE user_id = ? AND document_id = ?`,
+    [userId, documentId],
+  );
+  const now = Date.now();
+  await dbRun(
+    db,
+    `INSERT INTO ${SQLITE_TABLES.documentShares}
+     (
+       user_id, document_id, share_id, enabled, listed, access_type, duration_type,
+       start_at, end_at, password_hash, password_salt, password_algo, password_version,
+       html_snapshot, title_snapshot, excerpt_snapshot, snapshot_version, snapshot_hash,
+       last_snapshot_at, created_at, updated_at
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, document_id) DO UPDATE SET
+       share_id = excluded.share_id,
+       enabled = excluded.enabled,
+       listed = excluded.listed,
+       access_type = excluded.access_type,
+       duration_type = excluded.duration_type,
+       start_at = excluded.start_at,
+       end_at = excluded.end_at,
+       password_hash = excluded.password_hash,
+       password_salt = excluded.password_salt,
+       password_algo = excluded.password_algo,
+       password_version = excluded.password_version,
+       html_snapshot = excluded.html_snapshot,
+       title_snapshot = excluded.title_snapshot,
+       excerpt_snapshot = excluded.excerpt_snapshot,
+       snapshot_version = excluded.snapshot_version,
+       snapshot_hash = excluded.snapshot_hash,
+       last_snapshot_at = excluded.last_snapshot_at,
+       updated_at = excluded.updated_at`,
+    [
+      userId,
+      documentId,
+      String(input.shareId || ""),
+      input.enabled ? 1 : 0,
+      input.listed ? 1 : 0,
+      String(input.accessType || "public"),
+      String(input.durationType || "permanent"),
+      input.startAt ?? null,
+      input.endAt ?? null,
+      input.passwordHash ?? null,
+      input.passwordSalt ?? null,
+      input.passwordAlgo ?? null,
+      input.passwordVersion ?? null,
+      input.htmlSnapshot ?? null,
+      input.titleSnapshot ?? null,
+      input.excerptSnapshot ?? null,
+      input.snapshotVersion ?? null,
+      input.snapshotHash ?? null,
+      input.lastSnapshotAt ?? null,
+      existing?.created_at ?? now,
+      now,
+    ],
+  );
+  return getDocumentShareByDocumentId(db, userId, documentId);
+};
+
+const replaceDocumentShareAssets = async (db, userId, documentId, snapshotHash, assetIds) => {
+  const documentRow = await getDocumentRowByDocumentId(db, userId, documentId);
+  if (!documentRow) {
+    throw new Error(`document not found: ${documentId}`);
+  }
+  const normalizedAssetIds = Array.from(
+    new Set(
+      (assetIds || [])
+        .map((item) => String(item || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  await dbRun(db, `DELETE FROM ${SQLITE_TABLES.documentShareAssets} WHERE user_id = ? AND document_id = ?`, [userId, documentId]);
+  const now = Date.now();
+  for (const assetId of normalizedAssetIds) {
+    await dbRun(
+      db,
+      `INSERT INTO ${SQLITE_TABLES.documentShareAssets}
+       (user_id, document_id, asset_id, snapshot_hash, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [userId, documentId, assetId, snapshotHash, now],
+    );
+  }
+  return listDocumentShareAssets(db, userId, documentId);
+};
+
+const listDocumentShareAssets = async (db, userId, documentId) => {
+  const rows = await dbAll(
+    db,
+    `SELECT * FROM ${SQLITE_TABLES.documentShareAssets}
+     WHERE user_id = ? AND document_id = ?
+     ORDER BY asset_id ASC`,
+    [userId, documentId],
+  );
+  return rows.map((row) => mapDocumentShareAsset(row));
+};
 
 const touchLogin = async (db, userId, ip) => {
   const now = Date.now();
@@ -993,7 +1331,7 @@ const requireAuth = async (request, env, db) => {
   if (payload.ver != null && user.tokenVersion != null && payload.ver !== user.tokenVersion) {
     throw new Error("token expired");
   }
-  if (user.passwordChangedAt && payload.iat && payload.iat * 1000 < toMillis(user.passwordChangedAt)) {
+  if (user.passwordChangedAt && payload.iat && payload.iat * 1000 + 999 < toMillis(user.passwordChangedAt)) {
     throw new Error("password changed");
   }
   return {userId, user};
@@ -1497,6 +1835,351 @@ const ensureRemoteConfigKeyAllowed = (key) => {
 };
 
 // Cloudflare Worker API 主入口
+const getShareAccessSecret = (env) => env.SHARE_ACCESS_SECRET || env.JWT_SECRET || "change-me-in-prod";
+
+const getShareClientIp = (request) => {
+  const forwarded = request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "";
+  return String(forwarded || "unknown").split(",")[0].trim() || "unknown";
+};
+
+const getSharePasswordGrant = async (request, env, share) => {
+  const cookies = parseCookies(request.headers.get("Cookie"));
+  const token = cookies[getShareAccessCookieName()];
+  if (!token) return false;
+  try {
+    const payload = await verifyShareAccessToken(token, getShareAccessSecret(env));
+    return payload.shareId === share.shareId && payload.passwordVersion === (share.passwordVersion ?? 0);
+  } catch (_error) {
+    return false;
+  }
+};
+
+const getSharePageHeaders = (lastModifiedAt, isPrivate) => {
+  const headers = new Headers();
+  headers.set("Content-Security-Policy", SHARE_READ_CSP);
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", SHARE_REFERRER_POLICY);
+  if (isPrivate) {
+    headers.set("Cache-Control", SHARE_PRIVATE_CACHE_CONTROL);
+    headers.set("CDN-Cache-Control", "no-store");
+  } else {
+    headers.set("Cache-Control", SHARE_PAGE_BROWSER_CACHE_CONTROL);
+    headers.set(
+      "CDN-Cache-Control",
+      shouldUseLongShareCdnCache(lastModifiedAt ?? null) ? SHARE_CDN_LONG_CACHE_CONTROL : SHARE_CDN_SHORT_CACHE_CONTROL,
+    );
+  }
+  return headers;
+};
+
+const purgeShareCache = async (request, env, paths) => {
+  const purger = createCloudflareShareCachePurger({
+    zoneId: env.CLOUDFLARE_ZONE_ID || env.CF_ZONE_ID,
+    apiToken: env.CLOUDFLARE_API_TOKEN || env.CF_API_TOKEN,
+  });
+  if (!purger) return;
+  const urls = buildShareCachePurgeUrls(new URL(request.url).origin, paths);
+  if (!urls.length) return;
+  try {
+    await purger.purgeByUrls(urls);
+  } catch (error) {
+    console.warn("share cache purge failed:", error);
+  }
+};
+
+const checkShareRateLimit = (shareId, ip, nowMs = Date.now()) => {
+  const keys = buildSharePasswordRateLimitKeys(shareId, ip);
+  const buckets = [
+    {mapKey: keys.shareIp, rule: SHARE_PASSWORD_RATE_LIMIT_RULES.share_ip},
+    {mapKey: keys.share, rule: SHARE_PASSWORD_RATE_LIMIT_RULES.share},
+    {mapKey: keys.ip, rule: SHARE_PASSWORD_RATE_LIMIT_RULES.ip},
+  ];
+  for (const bucket of buckets) {
+    const decision = evaluateShareRateLimit(sharePasswordRateLimitState.get(bucket.mapKey) || {failures: 0}, bucket.rule, nowMs);
+    if (!decision.allowed) return decision;
+  }
+  return {allowed: true, retryAfterSec: 0, blockedUntil: null};
+};
+
+const recordShareAccessFailure = (shareId, ip, nowMs = Date.now()) => {
+  const keys = buildSharePasswordRateLimitKeys(shareId, ip);
+  const buckets = [
+    {mapKey: keys.shareIp, rule: SHARE_PASSWORD_RATE_LIMIT_RULES.share_ip},
+    {mapKey: keys.share, rule: SHARE_PASSWORD_RATE_LIMIT_RULES.share},
+    {mapKey: keys.ip, rule: SHARE_PASSWORD_RATE_LIMIT_RULES.ip},
+  ];
+  let retryAfterSec = 0;
+  for (const bucket of buckets) {
+    const currentState = sharePasswordRateLimitState.get(bucket.mapKey) || {failures: 0};
+    const {nextState, decision} = recordShareRateLimitFailure(currentState, bucket.rule, nowMs);
+    sharePasswordRateLimitState.set(bucket.mapKey, nextState);
+    retryAfterSec = Math.max(retryAfterSec, decision.retryAfterSec);
+  }
+  return retryAfterSec;
+};
+
+export async function handlePublicReadRequest(request, env) {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+  if (request.method === "GET" && pathname === "/read") {
+    const {page, pageSize} = normalizeShareListPageParams({
+      page: url.searchParams.get("page"),
+      pageSize: url.searchParams.get("pageSize"),
+    });
+    const data = await listPublicDocumentShares(env.DB, page, pageSize, Date.now());
+    const cacheableVariant = shouldCacheShareListVariant({
+      page,
+      pageSize,
+      hasExplicitPageParam: url.searchParams.has("page"),
+      hasExplicitPageSizeParam: url.searchParams.has("pageSize"),
+    });
+    return htmlResponse(request, renderShareListPage(data), 200, {
+      "Cache-Control": cacheableVariant ? SHARE_LIST_CACHE_CONTROL : SHARE_LIST_VARIANT_CACHE_CONTROL,
+      "CDN-Cache-Control": cacheableVariant ? SHARE_LIST_CDN_CACHE_CONTROL : SHARE_LIST_VARIANT_CDN_CACHE_CONTROL,
+    });
+  }
+
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts[0] !== "read" || !parts[1]) {
+    return null;
+  }
+
+  const shareId = decodeURIComponent(parts[1]);
+  if (request.method === "GET" && parts.length === 2) {
+    const context = await getPublicDocumentShare(env.DB, shareId);
+    if (!context) {
+      return htmlResponse(
+        request,
+        renderShareStatusPage({
+          title: "公开链接不存在",
+          message: "这个公开链接不存在，或者已经被移除。",
+        }),
+        404,
+        getSharePageHeaders(null, true),
+      );
+    }
+    const hasPasswordGrant = await getSharePasswordGrant(request, env, context.share);
+    const decision = evaluateShareAccess({
+      share: context.share,
+      mode: "remote",
+      target: "page",
+      now: Date.now(),
+      hasPasswordGrant,
+    });
+    if (decision.code !== "allow") {
+      return htmlResponse(
+        request,
+        renderShareStatusPage({
+          title: decision.httpStatus === 410 ? "公开链接已失效" : "当前无法访问",
+          message:
+            decision.reason === "not_started"
+              ? "这篇文档尚未到开放阅读时间。"
+              : decision.reason === "expired"
+                ? "这篇文档的公开时间已结束。"
+                : "当前公开链接不可访问。",
+        }),
+        decision.httpStatus,
+        getSharePageHeaders(null, true),
+      );
+    }
+    if (decision.pageKind === "password") {
+      return htmlResponse(
+        request,
+        renderSharePasswordPage({
+          share: context.share,
+          meta: context.meta,
+          errorMessage: getShareErrorMessage(url.searchParams.get("error")),
+        }),
+        200,
+        getSharePageHeaders(null, true),
+      );
+    }
+    if (!context.share.htmlSnapshot || context.share.snapshotVersion == null || !context.share.snapshotHash) {
+      return htmlResponse(
+        request,
+        renderShareStatusPage({
+          title: "公开内容准备中",
+          message: "当前文档的公开快照尚未准备完成，请稍后再试。",
+          robots: decision.robots,
+        }),
+        200,
+        getSharePageHeaders(null, true),
+      );
+    }
+    const lastModifiedAt = Number(context.meta.updatedAt || context.share.lastSnapshotAt || context.share.updatedAt || Date.now());
+    return htmlResponse(
+      request,
+      renderShareDocumentPage({
+        share: context.share,
+        meta: context.meta,
+        robots: decision.robots,
+        shellMode: !decision.canRenderSsr,
+      }),
+      200,
+      getSharePageHeaders(lastModifiedAt, !decision.canRenderSsr),
+    );
+  }
+
+  if (request.method === "POST" && parts.length === 3 && parts[2] === "access") {
+    const context = await getPublicDocumentShare(env.DB, shareId);
+    if (!context) {
+      return htmlResponse(
+        request,
+        renderShareStatusPage({
+          title: "公开链接不存在",
+          message: "这个公开链接不存在，或者已经被移除。",
+        }),
+        404,
+        getSharePageHeaders(null, true),
+      );
+    }
+    if (context.share.accessType !== "password") {
+      return Response.redirect(new URL(`/read/${encodeURIComponent(context.share.shareId)}`, request.url), 302);
+    }
+    const ip = getShareClientIp(request);
+    const limitDecision = checkShareRateLimit(context.share.shareId, ip);
+    if (!limitDecision.allowed) {
+      const headers = getSharePageHeaders(null, true);
+      headers.set("Retry-After", String(limitDecision.retryAfterSec));
+      return htmlResponse(
+        request,
+        renderShareStatusPage({
+          title: "尝试过于频繁",
+          message: "密码输入过于频繁，请稍后再试。",
+        }),
+        429,
+        headers,
+      );
+    }
+    const form = new URLSearchParams(await request.text());
+    const password = form.get("password") || "";
+    const isValid =
+      Boolean(password) &&
+      Boolean(context.share.passwordHash) &&
+      Boolean(context.share.passwordSalt) &&
+      (await verifySharePassword(password, String(context.share.passwordHash), String(context.share.passwordSalt)));
+    if (!isValid) {
+      recordShareAccessFailure(context.share.shareId, ip);
+      const headers = new Headers({
+        Location: `/read/${encodeURIComponent(context.share.shareId)}?error=password`,
+      });
+      headers.append(
+        "Set-Cookie",
+        buildCookie(getShareAccessCookieName(), "", {
+          path: `/read/${encodeURIComponent(context.share.shareId)}`,
+          maxAge: 0,
+          httpOnly: true,
+          sameSite: "Lax",
+          secure: new URL(request.url).protocol === "https:",
+        }),
+      );
+      return new Response(null, {status: 302, headers});
+    }
+    const token = await signShareAccessToken(
+      {
+        shareId: context.share.shareId,
+        passwordVersion: context.share.passwordVersion ?? 0,
+      },
+      getShareAccessSecret(env),
+      SHARE_ACCESS_COOKIE_TTL_SECONDS,
+    );
+    const headers = new Headers({
+      Location: `/read/${encodeURIComponent(context.share.shareId)}`,
+    });
+    headers.append(
+      "Set-Cookie",
+      buildShareAccessCookie(token, context.share.shareId, {
+        secure: new URL(request.url).protocol === "https:",
+      }),
+    );
+    return new Response(null, {status: 302, headers});
+  }
+
+  if (request.method === "GET" && parts.length === 3 && parts[2] === "content") {
+    const context = await getPublicDocumentShare(env.DB, shareId);
+    if (!context) {
+      return errorResponse(request, "share not found", 404);
+    }
+    const hasPasswordGrant = await getSharePasswordGrant(request, env, context.share);
+    const decision = evaluateShareAccess({
+      share: context.share,
+      mode: "remote",
+      target: "content",
+      now: Date.now(),
+      hasPasswordGrant,
+    });
+    if (decision.code !== "allow" || !decision.canAccessContent) {
+      return errorResponse(request, decision.reason, decision.httpStatus);
+    }
+    if (!context.share.htmlSnapshot || context.share.snapshotVersion == null || !context.share.snapshotHash) {
+      return errorResponse(request, "share snapshot unavailable", 404);
+    }
+    const headers = buildCorsHeaders(request);
+    headers.set("Content-Type", "application/json");
+    if (context.share.accessType === "password") {
+      headers.set("Cache-Control", SHARE_PRIVATE_CACHE_CONTROL);
+      headers.set("CDN-Cache-Control", "no-store");
+    } else {
+      const lastModifiedAt = Number(context.meta.updatedAt || context.share.lastSnapshotAt || context.share.updatedAt || Date.now());
+      headers.set("Cache-Control", SHARE_PAGE_BROWSER_CACHE_CONTROL);
+      headers.set(
+        "CDN-Cache-Control",
+        shouldUseLongShareCdnCache(lastModifiedAt) ? SHARE_CDN_LONG_CACHE_CONTROL : SHARE_CDN_SHORT_CACHE_CONTROL,
+      );
+    }
+    return new Response(JSON.stringify({errcode: 0, errmsg: "ok", data: buildShareContentPayload(context.share, context.meta)}), {
+      status: 200,
+      headers,
+    });
+  }
+
+  if (request.method === "GET" && parts.length === 4 && parts[2] === "assets") {
+    const assetId = normalizeShareAssetId(decodeURIComponent(parts[3] || ""));
+    if (!assetId) {
+      return new Response(null, {status: 404});
+    }
+    const context = await getPublicDocumentShare(env.DB, shareId);
+    if (!context) {
+      return new Response(null, {status: 404});
+    }
+    const hasPasswordGrant = await getSharePasswordGrant(request, env, context.share);
+    const decision = evaluateShareAccess({
+      share: context.share,
+      mode: "remote",
+      target: "asset",
+      now: Date.now(),
+      hasPasswordGrant,
+    });
+    if (decision.code !== "allow" || !decision.canAccessAsset) {
+      return new Response(null, {status: decision.httpStatus});
+    }
+    const exists = await hasPublicDocumentShareAsset(env.DB, context.share.shareId, assetId);
+    if (!exists) {
+      return new Response(null, {status: 404});
+    }
+    const targetPath = assetId.startsWith("/") ? assetId : `/${assetId}`;
+    const upstream = await env.ASSETS.fetch(new Request(new URL(targetPath, request.url), request));
+    if (upstream.status === 404) {
+      return upstream;
+    }
+    const headers = new Headers(upstream.headers);
+    const lastModifiedAt = Number(context.meta.updatedAt || context.share.lastSnapshotAt || context.share.updatedAt || Date.now());
+    const cacheHeaders = context.share.accessType === "password"
+      ? assetResponseHeaders(SHARE_PRIVATE_CACHE_CONTROL, "no-store")
+      : assetResponseHeaders(
+          SHARE_PAGE_BROWSER_CACHE_CONTROL,
+          shouldUseLongShareCdnCache(lastModifiedAt) ? SHARE_CDN_LONG_CACHE_CONTROL : SHARE_CDN_SHORT_CACHE_CONTROL,
+        );
+    cacheHeaders.forEach((value, key) => headers.set(key, value));
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers,
+    });
+  }
+
+  return null;
+};
+
 export async function handleApiRequest(request, env) {
   const url = new URL(request.url);
   const config = buildRuntimeConfig(env, request);
@@ -1516,6 +2199,25 @@ export async function handleApiRequest(request, env) {
   const cookies = parseCookies(request.headers.get("Cookie"));
 
   try {
+    if (segments[0] === "_poc" && segments[1] === "share-sanitize") {
+      if (request.method === "GET") {
+        const result = await runShareSanitizeWorkerPoC();
+        return jsonResponse(request, result, 200);
+      }
+      if (request.method === "POST") {
+        const body = await readJson(request);
+        const result = await runShareSanitizeWorkerPoC(String(body.html || ""));
+        return jsonResponse(request, result, 200);
+      }
+    }
+
+    if (segments[0] === "_poc" && segments[1] === "share-pbkdf2") {
+      if (request.method === "GET") {
+        const result = await runSharePbkdf2WorkerPoC();
+        return jsonResponse(request, result, 200);
+      }
+    }
+
     if (segments[0] === "auth") {
       const action = segments[1];
       if (request.method === "POST" && action === "register") {
@@ -1738,11 +2440,74 @@ export async function handleApiRequest(request, env) {
         const categories = await listCategories(env.DB, userId);
         return jsonResponse(request, {meta: row ? mapDoc(row) : null, categories});
       }
+      if (request.method === "GET" && segments.length === 3 && segments[2] === "settings") {
+        const documentId = decodeURIComponent(segments[1] || "");
+        const [row, categories, share] = await Promise.all([
+          getDocumentRowByUuid(env.DB, userId, documentId),
+          listCategories(env.DB, userId),
+          getDocumentShareByDocumentId(env.DB, userId, documentId),
+        ]);
+        return jsonResponse(
+          request,
+          buildDocumentSettingsPayload({
+            meta: row ? mapDoc(row) : null,
+            categories,
+            share,
+            origin: url.origin,
+          }),
+        );
+      }
       if (request.method === "PATCH" && segments.length === 3 && segments[2] === "meta") {
         const documentId = decodeURIComponent(segments[1] || "");
         const body = await readJson(request);
         await updateDocumentMeta(env.DB, userId, documentId, body || {});
         return jsonResponse(request, {});
+      }
+      if (request.method === "PUT" && segments.length === 3 && segments[2] === "settings") {
+        const documentId = decodeURIComponent(segments[1] || "");
+        const body = await readJson(request);
+        const metaUpdates = buildMetaUpdateInput(body?.meta);
+        const existingMetaRow = await getDocumentRowByUuid(env.DB, userId, documentId);
+        if (!existingMetaRow) {
+          return errorResponse(request, "document not found", 404);
+        }
+        if (metaUpdates) {
+          await updateDocumentMeta(env.DB, userId, documentId, metaUpdates);
+        }
+        if (body?.share) {
+          const existingShare = await getDocumentShareByDocumentId(env.DB, userId, documentId);
+          const saveInput = await buildShareSaveInput({
+            existingShare,
+            documentId,
+            shareInput: body.share,
+            generateShareId,
+            hashPassword: (password) => hashSharePassword(password),
+          });
+          await saveDocumentShare(env.DB, userId, saveInput);
+          const nextShare = await getDocumentShareByDocumentId(env.DB, userId, documentId);
+          await purgeShareCache(
+            request,
+            env,
+            collectShareCachePathsForSettingsChange({
+              previousShare: existingShare,
+              nextShare,
+            }),
+          );
+        }
+        const [row, categories, share] = await Promise.all([
+          getDocumentRowByUuid(env.DB, userId, documentId),
+          listCategories(env.DB, userId),
+          getDocumentShareByDocumentId(env.DB, userId, documentId),
+        ]);
+        return jsonResponse(
+          request,
+          buildDocumentSettingsPayload({
+            meta: row ? mapDoc(row) : null,
+            categories,
+            share,
+            origin: url.origin,
+          }),
+        );
       }
       if (request.method === "POST" && segments.length === 1) {
         const body = await readJson(request);
@@ -1781,6 +2546,50 @@ export async function handleApiRequest(request, env) {
         if (typeof body.content !== "string") return errorResponse(request, "content required", 400);
         await saveDocumentContent(env.DB, userId, documentId, body.content, body.updatedAt);
         return jsonResponse(request, {});
+      }
+      if (request.method === "PUT" && segments.length === 4 && segments[2] === "share" && segments[3] === "snapshot") {
+        const documentId = decodeURIComponent(segments[1] || "");
+        const body = await readJson(request);
+        const existingShare = await getDocumentShareByDocumentId(env.DB, userId, documentId);
+        if (!existingShare) {
+          return errorResponse(request, "share settings not found", 400);
+        }
+        try {
+          const prepared = await prepareSnapshotUpdate({
+            existingShare,
+            documentId,
+            snapshotInput: body,
+            sanitizeHtml: sanitizeShareHtmlForWorkerPoC,
+          });
+          if (prepared.decision.code === "conflict") {
+            return errorResponse(request, `snapshot conflict: ${prepared.decision.reason}`, 409);
+          }
+          const snapshotHash = prepared.saveInput.snapshotHash || existingShare.snapshotHash || "";
+          const assetIds = extractShareAssetIdsFromHtml(prepared.saveInput.htmlSnapshot || "");
+          if (prepared.decision.code === "accept") {
+            await saveDocumentShare(env.DB, userId, prepared.saveInput);
+          }
+          if (snapshotHash) {
+            await replaceDocumentShareAssets(env.DB, userId, documentId, snapshotHash, assetIds);
+          }
+          const share = await getDocumentShareByDocumentId(env.DB, userId, documentId);
+          await purgeShareCache(
+            request,
+            env,
+            collectShareCachePathsForSnapshotUpdate({
+              previousShare: existingShare,
+              nextShare: share,
+              accepted: prepared.decision.code === "accept",
+            }),
+          );
+          return jsonResponse(request, {share: serializeDocumentShareSettings(share, url.origin)});
+        } catch (error) {
+          const message = error?.message || "invalid snapshot payload";
+          if (String(message).includes("exceeds max size")) {
+            return errorResponse(request, message, 413);
+          }
+          return errorResponse(request, message, 400);
+        }
       }
       if (request.method === "DELETE" && segments.length === 2) {
         const documentId = decodeURIComponent(segments[1] || "");

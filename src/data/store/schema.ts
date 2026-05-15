@@ -16,7 +16,17 @@
  *  - users               -> 用户
  */
 
-import {DocumentMeta, Category, UserSession, User, SourceType} from "./types";
+import {
+  DocumentMeta,
+  Category,
+  UserSession,
+  User,
+  SourceType,
+  DocumentShare,
+  DocumentShareAsset,
+  ShareAccessType,
+  ShareDurationType,
+} from "./types";
 
 export const DEFAULT_USER_ID = 0;
 
@@ -35,6 +45,8 @@ export const SQLiteTables = {
   categories: "categories",
   settings: "user_setting",
   sessions: "user_sessions",
+  documentShares: "document_shares",
+  documentShareAssets: "document_share_assets",
 } as const;
 
 export interface SQLiteDocumentRow {
@@ -95,6 +107,40 @@ export interface SQLiteSessionRow {
   last_seen_at?: number | null;
   ip?: string | null;
   ua?: string | null;
+}
+
+export interface SQLiteDocumentShareRow {
+  id: number;
+  user_id: number;
+  document_id: string;
+  share_id: string;
+  enabled: number;
+  listed: number;
+  access_type: ShareAccessType;
+  duration_type: ShareDurationType;
+  start_at?: number | null;
+  end_at?: number | null;
+  password_hash?: string | null;
+  password_salt?: string | null;
+  password_algo?: "pbkdf2-sha256" | null;
+  password_version?: number | null;
+  html_snapshot?: string | null;
+  title_snapshot?: string | null;
+  excerpt_snapshot?: string | null;
+  snapshot_version?: number | null;
+  snapshot_hash?: string | null;
+  last_snapshot_at?: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface SQLiteDocumentShareAssetRow {
+  id: number;
+  user_id: number;
+  document_id: string;
+  asset_id: string;
+  snapshot_hash: string;
+  updated_at: number;
 }
 
 // SQLite DDL 统一来源，Node 端初始化时直接使用，避免手写分叉。
@@ -184,6 +230,47 @@ export const SQLiteDDL = {
       FOREIGN KEY (user_id) REFERENCES ${SQLiteTables.users}(id) ON DELETE CASCADE
     );
   `,
+  documentShares: `
+    CREATE TABLE IF NOT EXISTS ${SQLiteTables.documentShares} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      document_id TEXT NOT NULL,
+      share_id TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      listed INTEGER NOT NULL DEFAULT 0,
+      access_type TEXT NOT NULL DEFAULT 'public',
+      duration_type TEXT NOT NULL DEFAULT 'permanent',
+      start_at INTEGER,
+      end_at INTEGER,
+      password_hash TEXT,
+      password_salt TEXT,
+      password_algo TEXT,
+      password_version INTEGER,
+      html_snapshot TEXT,
+      title_snapshot TEXT,
+      excerpt_snapshot TEXT,
+      snapshot_version INTEGER,
+      snapshot_hash TEXT,
+      last_snapshot_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE (user_id, document_id),
+      UNIQUE (share_id),
+      FOREIGN KEY (user_id) REFERENCES ${SQLiteTables.users}(id) ON DELETE CASCADE
+    );
+  `,
+  documentShareAssets: `
+    CREATE TABLE IF NOT EXISTS ${SQLiteTables.documentShareAssets} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      document_id TEXT NOT NULL,
+      asset_id TEXT NOT NULL,
+      snapshot_hash TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE (user_id, document_id, asset_id),
+      FOREIGN KEY (user_id) REFERENCES ${SQLiteTables.users}(id) ON DELETE CASCADE
+    );
+  `,
 };
 
 const normalizeSource = (value?: string | null): SourceType | undefined => {
@@ -212,5 +299,39 @@ export const mapSqlCategory = (row: SQLiteCategoryRow): Category => ({
   updatedAt: row.updated_at,
   source: normalizeSource(row.source as string | null),
   version: row.version ?? undefined,
+  uid: row.user_id,
+});
+
+export const mapSqlDocumentShare = (row: SQLiteDocumentShareRow): DocumentShare => ({
+  id: row.id,
+  documentId: row.document_id,
+  shareId: row.share_id,
+  enabled: Boolean(row.enabled),
+  listed: Boolean(row.listed),
+  accessType: row.access_type,
+  durationType: row.duration_type,
+  startAt: row.start_at ?? null,
+  endAt: row.end_at ?? null,
+  passwordHash: row.password_hash ?? null,
+  passwordSalt: row.password_salt ?? null,
+  passwordAlgo: row.password_algo ?? null,
+  passwordVersion: row.password_version ?? null,
+  htmlSnapshot: row.html_snapshot ?? null,
+  titleSnapshot: row.title_snapshot ?? null,
+  excerptSnapshot: row.excerpt_snapshot ?? null,
+  snapshotVersion: row.snapshot_version ?? null,
+  snapshotHash: row.snapshot_hash ?? null,
+  lastSnapshotAt: row.last_snapshot_at ?? null,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  uid: row.user_id,
+});
+
+export const mapSqlDocumentShareAsset = (row: SQLiteDocumentShareAssetRow): DocumentShareAsset => ({
+  id: row.id,
+  documentId: row.document_id,
+  assetId: row.asset_id,
+  snapshotHash: row.snapshot_hash,
+  updatedAt: row.updated_at,
   uid: row.user_id,
 });

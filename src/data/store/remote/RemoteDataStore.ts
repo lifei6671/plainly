@@ -12,6 +12,7 @@ import {
   UpdateDocumentMetaInput,
 } from "../types";
 import {ensureJiebaReady, tokenizeForSearch} from "../../../search/jieba-tokenizer";
+import {DocumentSettingsPayload, UpdateDocumentSettingsInput, UpdateShareSnapshotInput, UpdateShareSnapshotResponse} from "../../../share";
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
 const SESSION_FLAG_COOKIE = "plainly_session";
@@ -125,8 +126,20 @@ export class RemoteDataStore implements IDataStore {
     return this.request<RenameDocumentPayload>(`/documents/${encodeURIComponent(documentId)}/rename`);
   }
 
+  getDocumentSettings(documentId: string): Promise<DocumentSettingsPayload> {
+    return this.request<DocumentSettingsPayload>(`/documents/${encodeURIComponent(documentId)}/settings`);
+  }
+
   updateDocumentMeta(documentId: string, updates: UpdateDocumentMetaInput): Promise<void> {
     return this.request<void>(`/documents/${encodeURIComponent(documentId)}/meta`, "PATCH", updates);
+  }
+
+  updateDocumentSettings(documentId: string, input: UpdateDocumentSettingsInput): Promise<DocumentSettingsPayload> {
+    return this.request<DocumentSettingsPayload>(`/documents/${encodeURIComponent(documentId)}/settings`, "PUT", input);
+  }
+
+  updateShareSnapshot(documentId: string, input: UpdateShareSnapshotInput): Promise<UpdateShareSnapshotResponse> {
+    return this.request<UpdateShareSnapshotResponse>(`/documents/${encodeURIComponent(documentId)}/share/snapshot`, "PUT", input);
   }
 
   listDocumentsPage(offset: number, limit: number): Promise<{items: DocumentMeta[]; hasMore: boolean}> {

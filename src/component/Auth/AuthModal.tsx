@@ -125,6 +125,14 @@ function AuthModal({visible, onClose, currentUser, onLogin, onRegister, onUpdate
         {!currentUser && (
           <>
             <Tabs.TabPane tab="登录" key="login">
+              {!isBrowserOnly && (
+                <Alert
+                  style={{marginBottom: 12}}
+                  type="info"
+                  message="首次使用请先注册账号，注册完成后会自动登录。"
+                  showIcon
+                />
+              )}
               {isBrowserOnly && (
                 <Alert
                   style={{marginBottom: 12}}

@@ -455,6 +455,10 @@ class App extends Component<AppProps, AppState> {
     this.props.dialog.setCategoryManageOpen(true);
   };
 
+  handleDocumentSettingsOpen = () => {
+    this.props.dialog.setRenameFileOpen(true);
+  };
+
   handleAuthClose = () => {
     this.setState({authVisible: false});
   };
@@ -772,7 +776,14 @@ class App extends Component<AppProps, AppState> {
                     </button>
                     &nbsp;
                     <b>文件名: </b>
-                    {documentName || "未命名.md"}
+                    <button
+                      type="button"
+                      className="nice-status-category-trigger"
+                      onClick={this.handleDocumentSettingsOpen}
+                      title="打开文档设置"
+                    >
+                      {documentName || "未命名.md"}
+                    </button>
                   </div>
                 ) : (
                   <div className="nice-status-item nice-status-item-main">
@@ -788,7 +799,14 @@ class App extends Component<AppProps, AppState> {
                     </button>
                     &nbsp;
                     <b>文件名: </b>
-                    {documentName || "未命名.md"}
+                    <button
+                      type="button"
+                      className="nice-status-category-trigger"
+                      onClick={this.handleDocumentSettingsOpen}
+                      title="打开文档设置"
+                    >
+                      {documentName || "未命名.md"}
+                    </button>
                   </div>
                 )}
                 <div className="nice-status-item">

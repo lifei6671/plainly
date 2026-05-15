@@ -1,5 +1,7 @@
 export type TimestampValue = Date | string | number;
 export type SourceType = "local" | "remote";
+export type ShareAccessType = "public" | "password";
+export type ShareDurationType = "permanent" | "range";
 
 export interface Category {
   id: number;
@@ -111,6 +113,61 @@ export interface UserSession {
   lastSeenAt?: TimestampValue | null;
   ip?: string | null;
   ua?: string | null;
+}
+
+export interface DocumentShare {
+  id?: number;
+  documentId: string;
+  shareId: string;
+  enabled: boolean;
+  listed: boolean;
+  accessType: ShareAccessType;
+  durationType: ShareDurationType;
+  startAt?: TimestampValue | null;
+  endAt?: TimestampValue | null;
+  passwordHash?: string | null;
+  passwordSalt?: string | null;
+  passwordAlgo?: "pbkdf2-sha256" | null;
+  passwordVersion?: number | null;
+  htmlSnapshot?: string | null;
+  titleSnapshot?: string | null;
+  excerptSnapshot?: string | null;
+  snapshotVersion?: number | null;
+  snapshotHash?: string | null;
+  lastSnapshotAt?: TimestampValue | null;
+  createdAt: TimestampValue;
+  updatedAt: TimestampValue;
+  uid?: number;
+}
+
+export interface SaveDocumentShareInput {
+  documentId: string;
+  shareId: string;
+  enabled: boolean;
+  listed: boolean;
+  accessType: ShareAccessType;
+  durationType: ShareDurationType;
+  startAt?: TimestampValue | null;
+  endAt?: TimestampValue | null;
+  passwordHash?: string | null;
+  passwordSalt?: string | null;
+  passwordAlgo?: "pbkdf2-sha256" | null;
+  passwordVersion?: number | null;
+  htmlSnapshot?: string | null;
+  titleSnapshot?: string | null;
+  excerptSnapshot?: string | null;
+  snapshotVersion?: number | null;
+  snapshotHash?: string | null;
+  lastSnapshotAt?: TimestampValue | null;
+}
+
+export interface DocumentShareAsset {
+  id?: number;
+  documentId: string;
+  assetId: string;
+  snapshotHash: string;
+  updatedAt: TimestampValue;
+  uid?: number;
 }
 
 export type DataStoreMode = "browser" | "remote" | "node" | "cloudflare" | "tauri";

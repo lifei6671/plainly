@@ -9,14 +9,33 @@ import {
   BatchCreateDocumentsResponse,
   Category,
   CategoryWithCount,
+  DocumentShare,
+  DocumentShareAsset,
   DocumentMeta,
   NewDocumentPayload,
   RenameDocumentPayload,
+  SaveDocumentShareInput,
   UpdateDocumentMetaInput,
   User,
   UserSession,
 } from "../data/store/types";
 import {IDataStore} from "../data/store/IDataStore";
+import {
+  DocumentSettingsPayload,
+  PublicShareDocumentContext,
+  PublicShareListPage,
+  UpdateDocumentSettingsInput,
+  UpdateShareSnapshotInput,
+  UpdateShareSnapshotResponse,
+  buildDocumentSettingsPayload,
+  buildMetaUpdateInput,
+  buildShareSaveInput,
+  extractShareAssetIdsFromHtml,
+  hashSharePassword,
+  prepareSnapshotUpdate,
+  sanitizeShareHtmlByStringRules,
+  serializeDocumentShareSettings,
+} from "../share";
 import {DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_ID} from "../utils/constant";
 import {
   DEFAULT_USER_ID,
@@ -26,8 +45,12 @@ import {
   SQLiteUserRow,
   SQLiteSettingRow,
   SQLiteSessionRow,
+  SQLiteDocumentShareRow,
+  SQLiteDocumentShareAssetRow,
   mapSqlDocToMeta,
   mapSqlCategory,
+  mapSqlDocumentShare,
+  mapSqlDocumentShareAsset,
   SQLiteDDL,
 } from "../data/store/schema";
 
@@ -118,6 +141,14 @@ const normalizeUuid = (value?: string | null): string => {
     .replace(/-/g, "");
 };
 
+const generateShareId = () =>
+  crypto
+    .randomBytes(16)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+
 export class NodeDataStore implements IDataStore {
   private db: Database.Database;
 
@@ -133,6 +164,11 @@ export class NodeDataStore implements IDataStore {
       // 若同名存在旧 json/小文件会导致 “file is not a database”，先删除
       try {
         const fs = require("fs");
+        const parentDir = path.dirname(file);
+        if (!fs.existsSync(parentDir)) {
+          // 首次启动时默认 data 目录可能不存在，先递归创建父目录。
+          fs.mkdirSync(parentDir, {recursive: true});
+        }
         const isSqlite = (p: string) => {
           try {
             const fd = fs.openSync(p, "r");
@@ -658,6 +694,8 @@ export class NodeDataStore implements IDataStore {
         SQLiteDDL.documents,
         SQLiteDDL.documentContent,
         SQLiteDDL.settings,
+        SQLiteDDL.documentShares,
+        SQLiteDDL.documentShareAssets,
       ].join("\n"),
     );
     // 初始化默认目录数据（category_id 固定值）
@@ -667,12 +705,38 @@ export class NodeDataStore implements IDataStore {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_document_content_user ON ${SQLiteTables.documentContent}(user_id);`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_settings_user ON ${SQLiteTables.settings}(user_id);`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_user ON ${SQLiteTables.sessions}(user_id);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_documents_created_at ON ${SQLiteTables.documents}(created_at DESC);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_document_shares_document ON ${SQLiteTables.documentShares}(document_id);`);
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_document_shares_list
+       ON ${SQLiteTables.documentShares}(enabled, listed, access_type, duration_type, start_at, end_at);`,
+    );
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_document_share_assets_document
+       ON ${SQLiteTables.documentShareAssets}(document_id, snapshot_hash);`,
+    );
   }
 
   private getUserRow(userId: number): SQLiteUserRow | null {
     return (
       (this.db.prepare(`SELECT * FROM ${SQLiteTables.users} WHERE id = ?`).get(userId) as SQLiteUserRow | undefined) ||
       null
+    );
+  }
+
+  private getDocumentShareRowByDocumentId(documentId: string): SQLiteDocumentShareRow | null {
+    return (
+      (this.db
+        .prepare(`SELECT * FROM ${SQLiteTables.documentShares} WHERE user_id = ? AND document_id = ?`)
+        .get(this.userId, documentId) as SQLiteDocumentShareRow | undefined) || null
+    );
+  }
+
+  private getDocumentShareRowByShareId(shareId: string): SQLiteDocumentShareRow | null {
+    return (
+      (this.db
+        .prepare(`SELECT * FROM ${SQLiteTables.documentShares} WHERE share_id = ?`)
+        .get(String(shareId || "").trim()) as SQLiteDocumentShareRow | undefined) || null
     );
   }
 
@@ -1254,6 +1318,20 @@ export class NodeDataStore implements IDataStore {
     return {meta, categories};
   }
 
+  async getDocumentSettings(documentUuid: string): Promise<DocumentSettingsPayload> {
+    const [meta, categories, share] = await Promise.all([
+      this.getDocumentMeta(documentUuid),
+      this.listCategories(),
+      this.getDocumentShare(documentUuid),
+    ]);
+    return buildDocumentSettingsPayload({
+      meta,
+      categories,
+      share,
+      origin: null,
+    });
+  }
+
   async updateDocumentMeta(documentUuid: string, updates: UpdateDocumentMetaInput): Promise<void> {
     this.ensureUserExists();
     const current = this.getDocumentRowByUuid(documentUuid);
@@ -1302,6 +1380,71 @@ export class NodeDataStore implements IDataStore {
     values.push(this.userId, current.id);
     const sql = `UPDATE ${SQLiteTables.documents} SET ${fields.join(", ")} WHERE user_id = ? AND id = ?`;
     this.db.prepare(sql).run(...values);
+  }
+
+  async updateDocumentSettings(
+    documentUuid: string,
+    input: UpdateDocumentSettingsInput,
+  ): Promise<DocumentSettingsPayload> {
+    this.ensureUserExists();
+    const existingMeta = await this.getDocumentMeta(documentUuid);
+    if (!existingMeta) {
+      throw new Error("document not found");
+    }
+
+    const metaUpdates = buildMetaUpdateInput(input?.meta);
+    if (metaUpdates) {
+      await this.updateDocumentMeta(documentUuid, metaUpdates);
+    }
+
+    if (input?.share) {
+      const existingShare = await this.getDocumentShare(documentUuid);
+      const saveInput = await buildShareSaveInput({
+        existingShare,
+        documentId: documentUuid,
+        shareInput: input.share,
+        generateShareId,
+        hashPassword: (password) => hashSharePassword(password),
+      });
+      await this.saveDocumentShare(saveInput);
+    }
+
+    return this.getDocumentSettings(documentUuid);
+  }
+
+  async updateShareSnapshot(
+    documentUuid: string,
+    input: UpdateShareSnapshotInput,
+  ): Promise<UpdateShareSnapshotResponse> {
+    this.ensureUserExists();
+    const existingShare = await this.getDocumentShare(documentUuid);
+    if (!existingShare) {
+      throw new Error("share settings not found");
+    }
+
+    const prepared = await prepareSnapshotUpdate({
+      existingShare,
+      documentId: documentUuid,
+      snapshotInput: input,
+      sanitizeHtml: async (html) => sanitizeShareHtmlByStringRules(html),
+    });
+
+    if (prepared.decision.code === "conflict") {
+      throw new Error("snapshot version conflict");
+    }
+
+    const snapshotHash = prepared.saveInput.snapshotHash || existingShare.snapshotHash || "";
+    const assetIds = extractShareAssetIdsFromHtml(prepared.saveInput.htmlSnapshot || "");
+    let savedShare = existingShare;
+    if (prepared.decision.code === "accept") {
+      savedShare = await this.saveDocumentShare(prepared.saveInput);
+    }
+    if (snapshotHash) {
+      await this.replaceDocumentShareAssets(documentUuid, snapshotHash, assetIds);
+    }
+    return {
+      share: serializeDocumentShareSettings(savedShare, null),
+    };
   }
 
   async listDocumentsPage(offset: number, limit: number): Promise<{items: DocumentMeta[]; hasMore: boolean}> {
@@ -1438,6 +1581,12 @@ export class NodeDataStore implements IDataStore {
     if (!current) return;
     const tx = this.db.transaction(() => {
       this.db
+        .prepare(`DELETE FROM ${SQLiteTables.documentShareAssets} WHERE user_id = ? AND document_id = ?`)
+        .run(this.userId, documentUuid);
+      this.db
+        .prepare(`DELETE FROM ${SQLiteTables.documentShares} WHERE user_id = ? AND document_id = ?`)
+        .run(this.userId, documentUuid);
+      this.db
         .prepare(`DELETE FROM ${SQLiteTables.documentContent} WHERE document_row_id = ? AND user_id = ?`)
         .run(current.id, this.userId);
       this.db
@@ -1445,6 +1594,244 @@ export class NodeDataStore implements IDataStore {
         .run(current.id, this.userId);
     });
     tx();
+  }
+
+  async getDocumentShare(documentId: string): Promise<DocumentShare | null> {
+    this.ensureUserExists();
+    const documentRow = this.getDocumentRowByUuid(documentId);
+    if (!documentRow) return null;
+    const row = this.getDocumentShareRowByDocumentId(documentId);
+    return row ? mapSqlDocumentShare(row) : null;
+  }
+
+  getStorageRoot(): string {
+    return path.dirname(this.dbFile);
+  }
+
+  async getPublicDocumentShare(shareId: string): Promise<PublicShareDocumentContext | null> {
+    const shareRow = this.getDocumentShareRowByShareId(shareId);
+    if (!shareRow) return null;
+    const documentRow =
+      (this.db
+        .prepare(`SELECT * FROM ${SQLiteTables.documents} WHERE user_id = ? AND document_id = ?`)
+        .get(shareRow.user_id, shareRow.document_id) as SQLiteDocumentRow | undefined) || null;
+    if (!documentRow) return null;
+    return {
+      meta: mapSqlDocToMeta(documentRow),
+      share: mapSqlDocumentShare(shareRow),
+    };
+  }
+
+  async listPublicDocumentShares(page: number, pageSize: number, nowMs: number = Date.now()): Promise<PublicShareListPage> {
+    const offset = Math.max(0, (page - 1) * pageSize);
+    const countRow = this.db
+      .prepare(
+        `SELECT COUNT(1) AS total
+         FROM ${SQLiteTables.documentShares} s
+         INNER JOIN ${SQLiteTables.documents} d
+           ON d.user_id = s.user_id AND d.document_id = s.document_id
+         WHERE s.enabled = 1
+           AND s.listed = 1
+           AND (
+             s.duration_type <> 'range'
+             OR ((s.start_at IS NULL OR s.start_at <= ?) AND (s.end_at IS NULL OR s.end_at >= ?))
+           )`,
+      )
+      .get(nowMs, nowMs) as {total?: number} | undefined;
+    const rows = this.db
+      .prepare(
+        `SELECT
+           s.*,
+           d.document_id AS doc_document_id,
+           d.name AS doc_name,
+           d.category_id AS doc_category_id,
+           d.created_at AS doc_created_at,
+           d.updated_at AS doc_updated_at,
+           d.char_count AS doc_char_count,
+           d.source AS doc_source,
+           d.version AS doc_version
+         FROM ${SQLiteTables.documentShares} s
+         INNER JOIN ${SQLiteTables.documents} d
+           ON d.user_id = s.user_id AND d.document_id = s.document_id
+         WHERE s.enabled = 1
+           AND s.listed = 1
+           AND (
+             s.duration_type <> 'range'
+             OR ((s.start_at IS NULL OR s.start_at <= ?) AND (s.end_at IS NULL OR s.end_at >= ?))
+           )
+         ORDER BY d.created_at DESC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(nowMs, nowMs, pageSize, offset) as Array<
+      SQLiteDocumentShareRow & {
+        doc_document_id: string;
+        doc_name: string;
+        doc_category_id: string;
+        doc_created_at: number;
+        doc_updated_at: number;
+        doc_char_count?: number | null;
+        doc_source?: string | null;
+        doc_version?: number | null;
+      }
+    >;
+
+    return {
+      items: rows.map((row) => ({
+        meta: mapSqlDocToMeta({
+          id: 0,
+          user_id: row.user_id,
+          document_id: row.doc_document_id,
+          name: row.doc_name,
+          category: 0,
+          category_id: row.doc_category_id,
+          created_at: row.doc_created_at,
+          updated_at: row.doc_updated_at,
+          char_count: row.doc_char_count ?? null,
+          source: row.doc_source ?? "remote",
+          version: row.doc_version ?? 1,
+        }),
+        share: mapSqlDocumentShare(row),
+      })),
+      page,
+      pageSize,
+      total: Number(countRow?.total || 0),
+    };
+  }
+
+  async hasPublicDocumentShareAsset(shareId: string, assetId: string): Promise<boolean> {
+    const row =
+      (this.db
+        .prepare(
+          `SELECT a.id
+           FROM ${SQLiteTables.documentShareAssets} a
+           INNER JOIN ${SQLiteTables.documentShares} s
+             ON s.user_id = a.user_id AND s.document_id = a.document_id
+           WHERE s.share_id = ? AND a.asset_id = ?
+           LIMIT 1`,
+        )
+        .get(String(shareId || "").trim(), String(assetId || "").trim()) as {id?: number} | undefined) || null;
+    return Boolean(row?.id);
+  }
+
+  async saveDocumentShare(input: SaveDocumentShareInput): Promise<DocumentShare> {
+    this.ensureUserExists();
+    const documentRow = this.getDocumentRowByUuid(input.documentId);
+    if (!documentRow) {
+      throw new Error(`document not found: ${input.documentId}`);
+    }
+
+    const now = Date.now();
+    const existing = this.getDocumentShareRowByDocumentId(input.documentId);
+    const createdAt = existing?.created_at ?? now;
+    const updatedAt = now;
+
+    this.db
+      .prepare(
+        `INSERT INTO ${SQLiteTables.documentShares}
+         (
+           user_id, document_id, share_id, enabled, listed, access_type, duration_type,
+           start_at, end_at, password_hash, password_salt, password_algo, password_version,
+           html_snapshot, title_snapshot, excerpt_snapshot, snapshot_version, snapshot_hash,
+           last_snapshot_at, created_at, updated_at
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, document_id) DO UPDATE SET
+           share_id = excluded.share_id,
+           enabled = excluded.enabled,
+           listed = excluded.listed,
+           access_type = excluded.access_type,
+           duration_type = excluded.duration_type,
+           start_at = excluded.start_at,
+           end_at = excluded.end_at,
+           password_hash = excluded.password_hash,
+           password_salt = excluded.password_salt,
+           password_algo = excluded.password_algo,
+           password_version = excluded.password_version,
+           html_snapshot = excluded.html_snapshot,
+           title_snapshot = excluded.title_snapshot,
+           excerpt_snapshot = excluded.excerpt_snapshot,
+           snapshot_version = excluded.snapshot_version,
+           snapshot_hash = excluded.snapshot_hash,
+           last_snapshot_at = excluded.last_snapshot_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        this.userId,
+        input.documentId,
+        input.shareId,
+        input.enabled ? 1 : 0,
+        input.listed ? 1 : 0,
+        input.accessType,
+        input.durationType,
+        input.startAt ?? null,
+        input.endAt ?? null,
+        input.passwordHash ?? null,
+        input.passwordSalt ?? null,
+        input.passwordAlgo ?? null,
+        input.passwordVersion ?? null,
+        input.htmlSnapshot ?? null,
+        input.titleSnapshot ?? null,
+        input.excerptSnapshot ?? null,
+        input.snapshotVersion ?? null,
+        input.snapshotHash ?? null,
+        input.lastSnapshotAt ?? null,
+        createdAt,
+        updatedAt,
+      );
+
+    const row = this.getDocumentShareRowByDocumentId(input.documentId);
+    if (!row) {
+      throw new Error(`failed to persist document share: ${input.documentId}`);
+    }
+    return mapSqlDocumentShare(row);
+  }
+
+  async replaceDocumentShareAssets(documentId: string, snapshotHash: string, assetIds: string[]): Promise<DocumentShareAsset[]> {
+    this.ensureUserExists();
+    const documentRow = this.getDocumentRowByUuid(documentId);
+    if (!documentRow) {
+      throw new Error(`document not found: ${documentId}`);
+    }
+
+    const normalizedAssetIds = Array.from(
+      new Set(
+        (assetIds || [])
+          .map((item) => String(item || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    const now = Date.now();
+
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(`DELETE FROM ${SQLiteTables.documentShareAssets} WHERE user_id = ? AND document_id = ?`)
+        .run(this.userId, documentId);
+      const insert = this.db.prepare(
+        `INSERT INTO ${SQLiteTables.documentShareAssets}
+         (user_id, document_id, asset_id, snapshot_hash, updated_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      );
+      normalizedAssetIds.forEach((assetId) => {
+        insert.run(this.userId, documentId, assetId, snapshotHash, now);
+      });
+    });
+    tx();
+
+    return this.listDocumentShareAssets(documentId);
+  }
+
+  async listDocumentShareAssets(documentId: string): Promise<DocumentShareAsset[]> {
+    this.ensureUserExists();
+    const documentRow = this.getDocumentRowByUuid(documentId);
+    if (!documentRow) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM ${SQLiteTables.documentShareAssets}
+         WHERE user_id = ? AND document_id = ?
+         ORDER BY asset_id ASC`,
+      )
+      .all(this.userId, documentId) as SQLiteDocumentShareAssetRow[];
+    return rows.map((row) => mapSqlDocumentShareAsset(row));
   }
 
   async getConfig<T = unknown>(key: string, fallback?: T): Promise<T | null> {

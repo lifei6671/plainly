@@ -7,6 +7,7 @@ import IndexDB from "../LocalHistory/indexdb";
 import debouce from "lodash.debounce";
 import {markIndexDirty, scheduleIndexRebuild} from "../../search";
 import {getDataStore} from "../../data/store";
+import {isShareSnapshotConflictError, syncShareSnapshotIfEnabled} from "../../share/browserSnapshot";
 import {countVisibleChars} from "../../utils/helper";
 import {DEFAULT_CATEGORY_UUID, DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_ID} from "../../utils/constant";
 
@@ -32,6 +33,7 @@ const getRuntimeUserId = () => {
 
 @inject("dialog")
 @inject("content")
+@inject("navbar")
 @observer
 class HistoryDialog extends Component<any, any> {
   timer = null;
@@ -39,6 +41,8 @@ class HistoryDialog extends Component<any, any> {
   db = null;
 
   articlesDb = null;
+
+  lastSnapshotWarningAt = 0;
 
   constructor(props) {
     super(props);
@@ -115,6 +119,37 @@ class HistoryDialog extends Component<any, any> {
     this.closeDialog();
   };
 
+  getSnapshotRenderMode = () => (this.props.navbar?.codeNum === 0 ? "wechat" : "default");
+
+  notifySnapshotWarning = (text) => {
+    const now = Date.now();
+    if (now - this.lastSnapshotWarningAt < 5000) {
+      return;
+    }
+    this.lastSnapshotWarningAt = now;
+    message.warning(text);
+  };
+
+  syncRemoteShareSnapshot = async (remoteStore, documentUuid, content, updatedAt) => {
+    try {
+      await syncShareSnapshotIfEnabled({
+        store: remoteStore,
+        documentUuid,
+        documentName: this.props.content.documentName || "未命名.md",
+        markdown: content,
+        snapshotVersion: updatedAt instanceof Date ? updatedAt.getTime() : Number(updatedAt) || Date.now(),
+        renderMode: this.getSnapshotRenderMode(),
+      });
+    } catch (error) {
+      console.error(error);
+      if (isShareSnapshotConflictError(error)) {
+        this.notifySnapshotWarning("公开快照版本冲突，请刷新页面后重试");
+        return;
+      }
+      this.notifySnapshotWarning("公开快照刷新失败，请稍后重试");
+    }
+  };
+
   autoSave = async (isRecent = false) => {
     const Content = this.props.content.markdownEditor.getValue();
     const documentUuid = this.getDocumentUuid();
@@ -140,6 +175,7 @@ class HistoryDialog extends Component<any, any> {
       if (remoteStore) {
         try {
           await remoteStore.saveDocumentContent(documentUuid, Content, now);
+          await this.syncRemoteShareSnapshot(remoteStore, documentUuid, Content, now);
         } catch (e) {
           console.error(e);
         }
