@@ -2,8 +2,8 @@ import React from "react";
 import {Menu, Dropdown} from "antd";
 import {observer, inject} from "mobx-react";
 
-import {TEMPLATE_OPTIONS, RIGHT_SYMBOL} from "../../utils/constant";
-import TEMPLATE from "../../template/index";
+import {RIGHT_SYMBOL} from "../../utils/constant";
+import {getThemeList, themeRegistry} from "../../theme";
 import "./Theme.css";
 
 @inject("content")
@@ -16,7 +16,8 @@ class Theme extends React.Component<any, any> {
       return;
     }
     const index = parseInt(item.key, 10);
-    const {id} = TEMPLATE_OPTIONS[index];
+    const themes = getThemeList();
+    const {id} = themes[index];
     this.props.navbar.setTemplateNum(index);
 
     // 更新style编辑器
@@ -25,7 +26,7 @@ class Theme extends React.Component<any, any> {
       // 切换自定义自动打开css编辑
       this.props.view.setStyleEditorOpen(true);
     } else {
-      this.props.content.setStyle(TEMPLATE.style[id]);
+      this.props.content.setStyle(themeRegistry.resolveThemeCss(id));
     }
   };
 
@@ -39,7 +40,7 @@ class Theme extends React.Component<any, any> {
 
     const mdMenu = (
       <Menu onClick={this.changeTemplate}>
-        {TEMPLATE_OPTIONS.map((option, index) => (
+        {getThemeList().map((option, index) => (
           <Menu.Item key={index}>
             <div id={`nice-menu-theme-${option.id}`} className="nice-themeselect-theme-item">
               <span>
@@ -77,4 +78,3 @@ class Theme extends React.Component<any, any> {
 }
 
 export default Theme;
-

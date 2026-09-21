@@ -9,7 +9,6 @@ import {
   DOCUMENT_CATEGORY_UUID,
   DOCUMENT_CATEGORY_NAME,
   STYLE,
-  TEMPLATE_OPTIONS,
   TEMPLATE_NUM,
   TEMPLATE_CUSTOM_NUM,
   MARKDOWN_THEME_ID,
@@ -21,6 +20,7 @@ import {
 } from "../utils/constant";
 import {replaceStyle, addStyleLabel} from "../utils/helper";
 import TEMPLATE from "../template/index";
+import {themeRegistry} from "../theme";
 import {getConfigSync, setConfigSync} from "../utils/configStore";
 
 class Content {
@@ -185,12 +185,8 @@ const templateNum = parseInt(String(getConfigSync(TEMPLATE_NUM, 0)), 10);
 if (templateNum === TEMPLATE_CUSTOM_NUM) {
   store.style = getConfigSync(STYLE, TEMPLATE.style.custom);
 } else {
-  if (templateNum) {
-    const {id} = TEMPLATE_OPTIONS[templateNum];
-    store.style = TEMPLATE.style[id];
-  } else {
-    store.style = TEMPLATE.style.normal;
-  }
+  const option = themeRegistry.getThemes()[templateNum];
+  store.style = option ? themeRegistry.resolveThemeCss(option.id) : TEMPLATE.style.normal;
 }
 
 // 在head中添加style标签

@@ -12,10 +12,18 @@ import "antd/dist/antd.css";
 import {observer, inject} from "mobx-react";
 
 import "../utils/styleMirror.css";
-import {TEMPLATE_CUSTOM_NUM, TEMPLATE_OPTIONS} from "../utils/constant";
-import TEMPLATE from "../template/index";
+import {getThemeList, themeRegistry} from "../theme";
 
 const CodeMirrorAny = CodeMirror as any;
+const CUSTOM_STYLE_PREFIX = "/*自定义样式，实时生效*/\n\n";
+
+export const getCustomStyleFromThemeIndex = (templateNum: number) => {
+  const theme = getThemeList()[templateNum];
+  if (!theme || theme.id === "custom") return undefined;
+
+  const css = themeRegistry.resolveThemeCss(theme.id);
+  return css === undefined ? undefined : `${CUSTOM_STYLE_PREFIX}${css}`;
+};
 
 @inject("content")
 @inject("navbar")
@@ -44,10 +52,11 @@ class StyleEditor extends Component<any, any> {
       okText: "确定",
       onOk: () => {
         const {templateNum} = this.props.navbar;
-        const {id} = TEMPLATE_OPTIONS[templateNum];
-        const style = `/*自定义样式，实时生效*/\n\n` + TEMPLATE.style[id];
+        const style = getCustomStyleFromThemeIndex(templateNum);
+        if (style === undefined) return;
+
         this.props.content.setCustomStyle(style);
-        this.props.navbar.setTemplateNum(TEMPLATE_CUSTOM_NUM);
+        this.props.navbar.setTemplateNum(getThemeList().findIndex((theme) => theme.id === "custom"));
       },
       onCancel: () => {},
     });
@@ -55,10 +64,11 @@ class StyleEditor extends Component<any, any> {
 
   changeStyle = (editor) => {
     const {templateNum} = this.props.navbar;
+    const theme = getThemeList()[templateNum];
     // focus状态很重要，初始化时被调用则不会进入条件
-    if (this.focus && templateNum !== TEMPLATE_CUSTOM_NUM) {
+    if (this.focus && theme && theme.id !== "custom") {
       this.showConfirm();
-    } else if (this.focus) {
+    } else if (this.focus && theme && theme.id === "custom") {
       const style = editor.getValue();
       this.props.content.setCustomStyle(style);
     }
