@@ -1,5 +1,9 @@
 import {ricoElementMapToCss} from "../adapters/ricoThemeAdapter";
 
+declare const describe: any;
+declare const it: any;
+declare const expect: any;
+
 describe("ricoElementMapToCss", () => {
   it("maps container to #nice and preserves every declaration", () => {
     expect(ricoElementMapToCss({container: "color: red; line-height: 1.8;"})).toContain(

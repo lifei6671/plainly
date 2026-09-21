@@ -1,4 +1,5 @@
 import {ricoElementMapToCss} from "./adapters/ricoThemeAdapter";
+import {normalizePlainlyHtml} from "./normalizer";
 import type {ThemeDefinition} from "./types";
 
 export class ThemeRegistry {
@@ -27,6 +28,11 @@ export class ThemeRegistry {
     if (!theme) return undefined;
     if (theme.mode === "legacy-css") return theme.css;
     if (theme.mode === "element-map") return ricoElementMapToCss(theme.styles);
-    return undefined;
+    return theme.css ?? "";
+  }
+
+  resolveThemeHtml(id: string, html: string) {
+    const transform = this.getTheme(id)?.transform;
+    return transform ? transform(normalizePlainlyHtml(html)) : html;
   }
 }

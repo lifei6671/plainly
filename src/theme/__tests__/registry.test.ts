@@ -3,6 +3,11 @@ jest.mock("../../template", () => ({
   default: {style: new Proxy({}, {get: () => "/* legacy CSS */"})},
 }));
 
+declare const jest: any;
+declare const describe: any;
+declare const it: any;
+declare const expect: any;
+
 import {ThemeRegistry} from "../registry";
 import {themeRegistry} from "..";
 import type {ThemeDefinition} from "../types";
@@ -18,6 +23,27 @@ describe("ThemeRegistry", () => {
   it("resolves Rico element-map CSS through the adapter", () => {
     const theme: ThemeDefinition = {id: "rico", ...metadata, mode: "element-map", styles: {h1: "color: red;"}};
     expect(new ThemeRegistry([theme]).resolveThemeCss("rico")).toContain("#nice h1 { color: red; }");
+  });
+
+  it("uses an empty component CSS value to clear the previous Markdown CSS", () => {
+    const legacy: ThemeDefinition = {id: "legacy", ...metadata, mode: "legacy-css", css: "#nice { color: black; }"};
+    const component: ThemeDefinition = {id: "component", ...metadata, mode: "component", transform: (html) => html};
+    const registry = new ThemeRegistry([legacy, component]);
+
+    let markdownCss = registry.resolveThemeCss("legacy");
+    markdownCss = registry.resolveThemeCss("component");
+
+    expect(markdownCss).toBe("");
+  });
+
+  it("returns component base CSS and still applies its DOM transform", () => {
+    const transform = jest.fn((html: string) => `<article>${html}</article>`);
+    const component: ThemeDefinition = {id: "component", ...metadata, mode: "component", css: ".component {}", transform};
+    const registry = new ThemeRegistry([component]);
+
+    expect(registry.resolveThemeCss("component")).toBe(component.css);
+    expect(registry.resolveThemeHtml("component", "<p>content</p>")).toBe("<article><p>content</p></article>");
+    expect(transform).toHaveBeenCalledWith("<p>content</p>");
   });
 
   it("returns undefined for unknown ids", () => {

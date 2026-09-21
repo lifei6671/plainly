@@ -109,6 +109,10 @@ jest.mock("./utils/hotkey", () => {
   };
 });
 
+jest.mock("./theme", () => ({
+  resolveThemeHtmlForTemplate: jest.fn((_templateNum, html) => html),
+}));
+
 jest.mock("./utils/configStore", () => ({
   getConfigSync: jest.fn(() => null),
   setConfigSync: jest.fn(),
@@ -136,6 +140,7 @@ jest.mock("./search", () => ({
 }));
 
 import App from "./App";
+import {resolveThemeHtmlForTemplate} from "./theme";
 import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
 import {getDataStore} from "./data/store/index";
 import {
@@ -150,6 +155,7 @@ const props = {
   navbar: {
     codeNum: 0,
     previewType: "mobile",
+    templateNum: 0,
     isSyncScroll: true,
   },
   view: {
@@ -199,6 +205,14 @@ it("renders without crashing with injected props", () => {
   const instance = new App(props);
   expect(() => instance.render()).not.toThrow();
   expect(instance.render()).toBeTruthy();
+});
+
+it("resolves preview HTML with the navbar template number", () => {
+  const instance = new App({...props, navbar: {...props.navbar, templateNum: 3}});
+
+  instance.render();
+
+  expect(resolveThemeHtmlForTemplate).toHaveBeenCalledWith(3, "");
 });
 
 it("typesets math after the mathjax loader finishes", async () => {

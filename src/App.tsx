@@ -43,6 +43,7 @@ import {Button} from "antd";
 import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
 import {getDataStore} from "./data/store/index";
 import {markIndexDirty, scheduleIndexRebuild} from "./search";
+import {resolveThemeHtmlForTemplate} from "./theme";
 
 const SESSION_FLAG_COOKIE = "plainly_session";
 const DATA_STORE_USER_ID_KEY = "__DATA_STORE_USER_ID__";
@@ -653,7 +654,7 @@ class App extends Component<AppProps, AppState> {
   }
 
   render() {
-    const {codeNum, previewType} = this.props.navbar;
+    const {codeNum, previewType, templateNum} = this.props.navbar;
     const {isEditAreaOpen, isPreviewAreaOpen, isStyleEditorOpen, isImmersiveEditing} = this.props.view;
     const {isSearchOpen} = this.props.dialog;
     const {content, documentName, documentUpdatedAt} = this.props.content;
@@ -661,7 +662,8 @@ class App extends Component<AppProps, AppState> {
     const markdownLength = countVisibleChars(content || "");
     const lastSavedText = documentUpdatedAt ? new Date(documentUpdatedAt).toLocaleString() : "未保存";
 
-    const parseHtml = codeNum === 0 ? markdownParserWechat.render(content) : markdownParser.render(content);
+    const rawHtml = codeNum === 0 ? markdownParserWechat.render(content) : markdownParser.render(content);
+    const parseHtml = resolveThemeHtmlForTemplate(templateNum, rawHtml);
 
     const mdEditingClass = classnames({
       "nice-md-editing": !isImmersiveEditing,
