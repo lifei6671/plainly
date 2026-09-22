@@ -210,14 +210,14 @@ describe("component theme production preview and WeChat export", () => {
     const parsed = toRoot(rawHtml);
 
     expect(rawHtml).toContain('<pre class="custom"><code class="hljs">');
-    expect(preview.querySelectorAll(".plainly-zen-whitespace-title")).toHaveLength(1);
-    expect(preview.querySelector(".plainly-zen-whitespace-section-number")?.textContent).toBe("01");
-    expect(preview.querySelector(".plainly-zen-whitespace-section-title strong")?.textContent).toBe("渲染");
-    expect(preview.querySelector(".plainly-zen-whitespace-section-title em")?.textContent).toBe("边界");
-    expect(preview.querySelector(".plainly-zen-whitespace-section-title a")?.getAttribute("href")).toBe(
+    expect(preview.querySelector("h1")?.textContent).toBe("从渲染管线理解主题迁移");
+    expect(preview.querySelector(".plainly-zen-whitespace-chapter-label")?.textContent).toBe("∞ · POSTSCRIPT");
+    expect(preview.querySelector(".plainly-zen-whitespace-chapter h2 strong")?.textContent).toBe("渲染");
+    expect(preview.querySelector(".plainly-zen-whitespace-chapter h2 em")?.textContent).toBe("边界");
+    expect(preview.querySelector(".plainly-zen-whitespace-chapter h2 a")?.getAttribute("href")).toBe(
       "https://example.com/render-contract",
     );
-    expect(preview.querySelector(".plainly-zen-whitespace-list ul ul li strong")?.textContent).toBe("强调");
+    expect(preview.querySelector(".plainly-zen-whitespace-list-row > ul li strong")?.textContent).toBe("强调");
     expect(preview.querySelectorAll(".plainly-zen-whitespace-list .plainly-zen-whitespace-list")).toHaveLength(0);
     expect(preview.querySelector("pre.custom")?.outerHTML).toBe(parsed.querySelector("pre.custom")?.outerHTML);
     expect(preview.querySelector(".mermaid")?.outerHTML).toBe(parsed.querySelector(".mermaid")?.outerHTML);
@@ -225,11 +225,11 @@ describe("component theme production preview and WeChat export", () => {
     const exportedHtml = exportHtml();
     const exported = toRoot(exportedHtml);
 
-    expect(exported.querySelector(".plainly-zen-whitespace-section-number")?.getAttribute("style")).toContain("color");
-    expect(exported.querySelector(".plainly-zen-whitespace-quote")?.getAttribute("style")).toMatch(
+    expect(exported.querySelector(".plainly-zen-whitespace-chapter-label")?.getAttribute("style")).toContain("color");
+    expect(exported.querySelector(".plainly-zen-whitespace-intro-quote")?.getAttribute("style")).toMatch(
       /text-align:\s*center|font-family:\s*Georgia/i,
     );
-    expect(exported.querySelector(".plainly-zen-whitespace-list ul ul")).not.toBeNull();
+    expect(exported.querySelector(".plainly-zen-whitespace-list-row > ul")).not.toBeNull();
     expect(exported.querySelector("pre.custom > code.hljs")?.getAttribute("style")).toContain("background: #f8f8f8");
     expect(exported.querySelector(".mermaid")?.textContent).toContain("Markdown --> Preview");
     expect(exportedHtml).not.toMatch(/var\(|display\s*:\s*grid|position\s*:\s*(absolute|fixed|sticky)|float\s*:/i);
@@ -244,17 +244,19 @@ describe("component theme production preview and WeChat export", () => {
     const parsed = toRoot(rawHtml);
 
     expect(rawHtml).toContain('class="code-snippet__fix code-snippet__js"');
-    expect(preview.querySelectorAll(".plainly-zen-whitespace-title")).toHaveLength(1);
-    expect(preview.querySelector(".plainly-zen-whitespace-section-number")?.textContent).toBe("01");
-    expect(preview.querySelector(".plainly-zen-whitespace-list ul ul")).not.toBeNull();
-    expect(preview.querySelector(".code-snippet__fix")?.outerHTML).toBe(parsed.querySelector(".code-snippet__fix")?.outerHTML);
+    expect(preview.querySelector("h1")?.textContent).toBe("从渲染管线理解主题迁移");
+    expect(preview.querySelector(".plainly-zen-whitespace-chapter-label")?.textContent).toBe("∞ · POSTSCRIPT");
+    expect(preview.querySelector(".plainly-zen-whitespace-list-row > ul")).not.toBeNull();
+    expect(preview.querySelector(".code-snippet__fix")?.outerHTML).toBe(
+      parsed.querySelector(".code-snippet__fix")?.outerHTML,
+    );
     expect(preview.querySelector(".code-snippet__fix")?.closest(".plainly-zen-whitespace-list")).toBeNull();
     expect(preview.querySelector(".mermaid")?.outerHTML).toBe(parsed.querySelector(".mermaid")?.outerHTML);
 
     const exportedHtml = exportHtml();
     const exported = toRoot(exportedHtml);
 
-    expect(exported.querySelector(".plainly-zen-whitespace-list ul ul")).not.toBeNull();
+    expect(exported.querySelector(".plainly-zen-whitespace-list-row > ul")).not.toBeNull();
     expect(exported.querySelector(".code-snippet__fix")).not.toBeNull();
     expect(exported.querySelector(".code-snippet__fix")?.closest(".plainly-zen-whitespace-list")).toBeNull();
     expect(exported.querySelector(".mermaid")?.textContent).toContain("Markdown --> Preview");
