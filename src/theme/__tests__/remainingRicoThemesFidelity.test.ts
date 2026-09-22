@@ -110,6 +110,22 @@ describe("remaining Rico MD theme fidelity contract", () => {
     expect(inlined.querySelector("figcaption")?.textContent).toBe("说明");
   });
 
+  it.each(GZH_REMAINING_COMPONENT_THEMES.map((theme, index) => ({theme, sourceTheme: GZH_REMAINING_SOURCE_THEMES[index]})))(
+    "keeps $theme.id root container responsive to the available host width",
+    ({theme, sourceTheme}) => {
+      const {container} = sourceTheme.styles;
+
+      expect(container).toContain("width:100%");
+      expect(container).toContain("max-width:none");
+      expect(theme.css).toMatch(/#nice\s*\{[^}]*width:100%;max-width:none;/);
+
+      const root = document.createElement("div");
+      root.innerHTML = juice.inlineContent(`<section id="nice"></section>`, BASIC_THEME_CSS + (theme.css || ""));
+      expect((root.querySelector("#nice") as HTMLElement).style.width).toBe("100%");
+      expect((root.querySelector("#nice") as HTMLElement).style.maxWidth).toBe("none");
+    },
+  );
+
   it("keeps source-line markers usable through legacy and Rico gzh component themes", () => {
     expect(themeRegistry.resolveThemeHtml("normal", '<h2 data-scroll-source-line="42">章节</h2>')).toContain(
       'data-scroll-source-line="42"',

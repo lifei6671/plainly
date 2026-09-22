@@ -188,7 +188,7 @@ export const moyuGreenTheme = {
   name: '摸鱼绿',
   preserveQuoteColors: true,
   styles: {
-    container: `max-width:677px;box-sizing:border-box;margin:0 auto;padding:16px 0 32px;background-color:#FFFFFF !important;color:#374151 !important;font-family:${SANS};line-height:1.75;letter-spacing:0.5px;overflow-wrap:anywhere;`,
+    container: `width:100%;max-width:none;box-sizing:border-box;margin:0 auto;padding:16px 0 32px;background-color:#FFFFFF !important;color:#374151 !important;font-family:${SANS};line-height:1.75;letter-spacing:0.5px;overflow-wrap:anywhere;`,
     h1: `margin:0 0 28px;padding:0 12px;font-family:${SANS};font-size:24px;font-weight:700;line-height:1.3;color:#111827 !important;`,
     h2: `margin:48px 0 24px;padding:0 12px;font-family:${SANS};font-size:17px;font-weight:700;line-height:1.5;color:#111827 !important;`,
     h3: `margin:32px 0 16px;padding:0 12px;font-family:${SANS};font-size:15px;font-weight:700;line-height:1.6;color:#111827 !important;`,
@@ -234,4 +234,3 @@ export const moyuGreenTheme = {
     });
   }
 };
-
