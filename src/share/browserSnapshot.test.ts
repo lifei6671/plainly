@@ -27,6 +27,7 @@ jest.mock("mermaid", () => ({
 
 const {buildShareSnapshotPayload, isShareSnapshotConflictError, syncShareSnapshotIfEnabled} = require("./browserSnapshot");
 const {solveHtml} = require("../utils/converter");
+const {PLAINLY_MERMAID_CONFIG} = require("../utils/mermaidConfig");
 
 describe("browser snapshot helpers", () => {
   it("builds snapshot payload from markdown and document title", async () => {
@@ -192,13 +193,7 @@ describe("browser snapshot helpers", () => {
     expect(payload.htmlSnapshot).toContain("<svg");
     expect(payload.htmlSnapshot).toContain("<path");
     const mermaid = require("mermaid").default;
-    expect(mermaid.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({
-        flowchart: expect.objectContaining({
-          htmlLabels: false,
-        }),
-      }),
-    );
+    expect(mermaid.initialize).toHaveBeenCalledWith(PLAINLY_MERMAID_CONFIG);
   });
 
   it("rerenders processed mermaid nodes from markdown before capturing diagram snapshots", async () => {

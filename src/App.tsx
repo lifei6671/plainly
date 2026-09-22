@@ -54,6 +54,7 @@ import {
   mapScrollByRatio,
   renderMarkdownWithHeadingAnchors,
 } from "./utils/syncScroll";
+import {PLAINLY_MERMAID_CONFIG} from "./utils/mermaidConfig";
 
 const SESSION_FLAG_COOKIE = "plainly_session";
 const DATA_STORE_USER_ID_KEY = "__DATA_STORE_USER_ID__";
@@ -595,13 +596,7 @@ class App extends Component<AppProps, AppState> {
       .then((module) => {
         const mermaid: any = module.default || module;
         this.mermaid = mermaid;
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          flowchart: {
-            htmlLabels: false,
-          },
-        });
+        mermaid.initialize(PLAINLY_MERMAID_CONFIG);
         (pluginCenter as any).mermaid = true;
         this.syncMermaidCacheScope();
         this.mermaidRenderSignature = this.getMermaidRenderSignature();

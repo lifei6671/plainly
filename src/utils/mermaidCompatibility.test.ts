@@ -5,6 +5,7 @@ import {join} from "path";
 import {pathToFileURL} from "url";
 import MarkdownIt from "markdown-it";
 import markdownItMermaid from "./markdown-it-mermaid";
+import {PLAINLY_MERMAID_CONFIG} from "./mermaidConfig";
 
 declare const it: any;
 declare const expect: any;
@@ -64,11 +65,7 @@ ${sequenceWithMultipleElseBranchesAndNestedLoop}
     Object.defineProperty(globalThis, "navigator", {configurable: true, value: window.navigator});
 
     const {default: mermaid} = await import(${JSON.stringify(mermaidUrl)});
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: "strict",
-      flowchart: {htmlLabels: false},
-    });
+    mermaid.initialize(${JSON.stringify(PLAINLY_MERMAID_CONFIG)});
 
     await mermaid.parse(${JSON.stringify(legacyFlowchart)});
     await mermaid.parse(${JSON.stringify(sequenceWithMultipleElseBranchesAndNestedLoop)});

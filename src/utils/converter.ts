@@ -105,7 +105,7 @@ const inlineMermaidSvgStyles = (root) => {
   }
   const svgs = root.querySelectorAll(".mermaid svg");
   svgs.forEach((svg) => {
-    const nodes = [svg, ...svg.querySelectorAll("*")];
+    const nodes = Array.from(svg.querySelectorAll("*"));
     inlineComputedStyles(nodes, SVG_STYLE_PROPS);
   });
 };

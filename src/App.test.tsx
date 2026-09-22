@@ -123,6 +123,14 @@ jest.mock("./utils/pluginCenter", () => ({
   mermaid: false,
 }));
 
+jest.mock("mermaid", () => ({
+  __esModule: true,
+  default: {
+    initialize: jest.fn(),
+    run: jest.fn(),
+  },
+}), {virtual: true});
+
 jest.mock("./utils/imageHosting", () => ({
   uploadAdaptor: jest.fn(),
 }));
@@ -169,6 +177,7 @@ jest.mock("./search", () => ({
 
 import App from "./App";
 import pluginCenter from "./utils/pluginCenter";
+import {PLAINLY_MERMAID_CONFIG} from "./utils/mermaidConfig";
 import {resolveThemeHtmlForTemplate} from "./theme";
 import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
 import {getDataStore} from "./data/store/index";
@@ -427,6 +436,25 @@ it("typesets math after the mathjax loader finishes", async () => {
   await flushPromises();
 
   expect(instance.handleUpdateMathjax).toHaveBeenCalled();
+});
+
+it("initializes editor Mermaid with the shared Neo config", async () => {
+  const instance = new App(props);
+
+  instance.initMermaid();
+  await flushPromises();
+
+  expect(PLAINLY_MERMAID_CONFIG).toEqual({
+    theme: "neo",
+    look: "neo",
+    startOnLoad: false,
+    securityLevel: "strict",
+    flowchart: {
+      htmlLabels: false,
+    },
+  });
+  expect(require("mermaid").default.initialize).toHaveBeenCalledWith(PLAINLY_MERMAID_CONFIG);
+  expect((pluginCenter as any).mermaid).toBe(true);
 });
 
 it("schedules Mermaid only for preview changes and renders it on blur", () => {
