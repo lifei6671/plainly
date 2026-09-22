@@ -7,7 +7,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import {NodeDataStore} from "./NodeDataStore";
-import {UpdateDocumentMetaInput} from "../data/store";
+import type {UpdateDocumentMetaInput} from "../data/store/types";
 import {filterRemoteConfigKeys, isRemoteConfigKeyAllowed} from "../utils/remoteConfigWhitelist";
 import {
   SHARE_ACCESS_COOKIE_TTL_SECONDS,

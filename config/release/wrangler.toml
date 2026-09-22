@@ -1,0 +1,21 @@
+name = "plainly-worker"
+main = "worker/index.ts"
+compatibility_date = "2026-05-13"
+workers_dev = true
+
+[assets]
+directory = "./docs"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "<YOUR_D1_DATABASE_NAME>"
+database_id = "<YOUR_D1_DATABASE_ID>"
+
+[vars]
+API_PREFIX = "/api"
+ACCESS_TOKEN_TTL_MS = "600000"
+REFRESH_TOKEN_TTL_MS = "1209600000"
+
+# Configure JWT_SECRET outside this file:
+# npx wrangler secret put JWT_SECRET

@@ -3,18 +3,14 @@ name: Release
 on:
   push:
     tags:
-      - "*"
+      - "v*"
 
 permissions:
   contents: write
 
 jobs:
-  web:
+  web-server:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [browser, node, worker]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,59 +23,76 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-      - name: Install dependencies
+      - name: Install build dependencies
         run: pnpm install --frozen-lockfile
-      - name: Build browser
-        if: matrix.target == 'browser'
-        run: VITE_DATA_STORE=browser pnpm build:app
-      - name: Build browser + node
-        if: matrix.target == 'node'
+      - name: Build server deployment assets
         run: VITE_DATA_STORE=remote VITE_API_BASE=/api pnpm build:node
-      - name: Build browser + worker
-        if: matrix.target == 'worker'
+      - name: Stage server deployment package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: pnpm release:package server "$RELEASE_TAG"
+      - name: Smoke test staged server package
+        working-directory: release
+        run: |
+          cd "$(node -p 'require("./package-result.json").stageName')"
+          npm ci --no-audit --no-fund
+          node -e "require('./server/server/index.js')"
+          node -e "const Database = require('better-sqlite3'); new Database(':memory:').close()"
+          rm -rf node_modules
+      - name: Archive server deployment package
+        working-directory: release
+        run: zip -r "../$(node -p 'require("./package-result.json").archiveName')" "$(node -p 'require("./package-result.json").stageName')"
+      - name: Upload server release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-server-web
+          path: plainly-server-*.zip
+          if-no-files-found: error
+
+  web-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - name: Install build dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build Worker deployment assets
         run: VITE_DATA_STORE=remote VITE_API_BASE=/api pnpm build:cf
-      - name: Package browser
-        if: matrix.target == 'browser'
-        run: zip -r "plainly-web-${{ github.ref_name }}.zip" docs
-      - name: Package browser + node
-        if: matrix.target == 'node'
-        run: >
-          zip -r "plainly-node-${{ github.ref_name }}.zip"
-          docs
-          src/server
-          src/data
-          src/utils/constant.js
-          config/server.config.json
-          tsconfig.server.json
-          package.json
-          pnpm-lock.yaml
-      - name: Package browser + worker
-        if: matrix.target == 'worker'
-        run: zip -r "plainly-worker-${{ github.ref_name }}.zip" docs worker wrangler.toml
-      - name: Upload browser to release
-        if: matrix.target == 'browser'
-        uses: softprops/action-gh-release@v2
+      - name: Stage Worker deployment package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: pnpm release:package worker "$RELEASE_TAG"
+      - name: Smoke test staged Worker package
+        working-directory: release
+        run: |
+          cd "$(node -p 'require("./package-result.json").stageName')"
+          npm ci --no-audit --no-fund
+          cp wrangler.toml wrangler.smoke.toml
+          sed -i 's/<YOUR_D1_DATABASE_NAME>/plainly-smoke/g; s/<YOUR_D1_DATABASE_ID>/00000000-0000-0000-0000-000000000000/g' wrangler.smoke.toml
+          npx --yes wrangler deploy --dry-run --config wrangler.smoke.toml
+          rm wrangler.smoke.toml
+          rm -rf node_modules .wrangler
+      - name: Archive Worker deployment package
+        working-directory: release
+        run: zip -r "../$(node -p 'require("./package-result.json").archiveName')" "$(node -p 'require("./package-result.json").stageName')"
+      - name: Upload Worker release asset
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ github.ref_name }}
-          files: plainly-web-${{ github.ref_name }}.zip
-          generate_release_notes: true
-      - name: Upload node to release
-        if: matrix.target == 'node'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: plainly-node-${{ github.ref_name }}.zip
-          generate_release_notes: false
-      - name: Upload worker to release
-        if: matrix.target == 'worker'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          files: plainly-worker-${{ github.ref_name }}.zip
-          generate_release_notes: false
+          name: release-worker-web
+          path: plainly-cloudflare-worker-*.zip
+          if-no-files-found: error
 
   tauri:
-    needs: web
+    needs: release
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -109,13 +122,31 @@ jobs:
         run: brew install nasm
       - name: Build Tauri
         run: pnpm tauri:build
-      - name: Upload Tauri to release
+      - name: Upload Tauri to existing release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          generate_release_notes: false
           files: |
             src-tauri/target/release/bundle/**/*.dmg
             src-tauri/target/release/bundle/**/*.tar.gz
             src-tauri/target/release/bundle/**/*.zip
             src-tauri/target/release/bundle/**/*.msi
             src-tauri/target/release/bundle/**/*.exe
+
+  release:
+    needs: [web-server, web-worker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*-web
+          path: release-assets
+          merge-multiple: true
+      - name: Create GitHub Release once
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release-assets/**/*

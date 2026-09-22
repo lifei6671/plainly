@@ -24,6 +24,8 @@ yarn-debug.log*
 yarn-error.log*
 
 dist
+/dist-server
+/release
 package-lock.json
 lib
 .wrangler/
