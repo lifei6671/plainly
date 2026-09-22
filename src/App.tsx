@@ -6,6 +6,7 @@ import "codemirror/mode/markdown/markdown";
 import "antd/dist/antd.css";
 import {observer, inject} from "mobx-react";
 import classnames from "classnames";
+import debounce from "lodash.debounce";
 import throttle from "lodash.throttle";
 
 import Dialog from "./layout/Dialog";
@@ -38,16 +39,32 @@ import appContext, {ImageHostingPreset} from "./utils/appContext";
 import {uploadAdaptor} from "./utils/imageHosting";
 import bindHotkeys, {betterTab, rightClick} from "./utils/hotkey";
 import AuthModal from "./component/Auth/AuthModal";
+import DocumentNavigator from "./component/DocumentNavigator";
 import {getConfigSync, setConfigSync} from "./utils/configStore";
-import {Button} from "antd";
+import {Button, Tooltip} from "antd";
+import {FolderOpenOutlined} from "@ant-design/icons";
 import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
 import {getDataStore} from "./data/store/index";
 import {markIndexDirty, scheduleIndexRebuild} from "./search";
+import {resolveThemeHtmlForTemplate} from "./theme";
+import {
+  buildLiveHeadingAnchors,
+  mapEditorToPreviewByAnchors,
+  mapPreviewToEditorByAnchors,
+  mapScrollByRatio,
+  renderMarkdownWithHeadingAnchors,
+} from "./utils/syncScroll";
+import {PLAINLY_MERMAID_CONFIG} from "./utils/mermaidConfig";
 
 const SESSION_FLAG_COOKIE = "plainly_session";
 const DATA_STORE_USER_ID_KEY = "__DATA_STORE_USER_ID__";
 const CURRENT_USER_ID_KEY = "__CURRENT_USER_ID__";
 const DATA_STORE_MODE_KEY = "__DATA_STORE_MODE__";
+const UNSAVED_MERMAID_CACHE_DOCUMENT_KEY = "__plainly_unsaved_mermaid_document__";
+
+type MermaidNode = HTMLElement & {
+  __plainlyMermaidCacheKey?: string;
+};
 
 type RuntimeUser = {
   id: number;
@@ -69,6 +86,13 @@ type AppProps = {
 type AppState = {
   authVisible: boolean;
   currentUser: RuntimeUser;
+  documentNavigatorOpen: boolean;
+  documentNavigatorPinned: boolean;
+};
+
+type DebouncedMermaidUpdate = (() => void) & {
+  cancel?: () => void;
+  flush?: () => void;
 };
 
 @inject("content")
@@ -80,11 +104,9 @@ type AppState = {
 class App extends Component<AppProps, AppState> {
   focus = false;
 
-  scale = 1;
+  syncScrollLock: "editor" | "preview" | null = null;
 
-  editorTop = 0;
-
-  index = 0;
+  syncScrollReleaseFrame: number | null = null;
 
   previewContainer: HTMLDivElement | null = null;
 
@@ -92,9 +114,15 @@ class App extends Component<AppProps, AppState> {
 
   mermaid: any = null;
 
+  mermaidRenderSignature: string;
+
+  mermaidCache = new Map<string, string>();
+
+  mermaidCacheDocumentKey: string;
+
   handleUpdateMathjax: () => void;
 
-  handleUpdateMermaid: () => void;
+  handleUpdateMermaid: DebouncedMermaidUpdate;
 
   isRemoteMode: boolean;
 
@@ -105,9 +133,13 @@ class App extends Component<AppProps, AppState> {
     this.state = {
       authVisible: false,
       currentUser: null,
+      documentNavigatorOpen: false,
+      documentNavigatorPinned: false,
     };
     this.handleUpdateMathjax = throttle(updateMathjax, 1500);
-    this.handleUpdateMermaid = throttle(this.updateMermaid, 800);
+    this.mermaidCacheDocumentKey = this.getMermaidDocumentKey();
+    this.mermaidRenderSignature = this.getMermaidRenderSignature();
+    this.handleUpdateMermaid = debounce(this.updateMermaid, 800, {leading: false, trailing: true});
     this.isRemoteMode = this.resolveDataStoreMode() === "remote";
     this.apiBase =
       (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) ||
@@ -164,11 +196,19 @@ class App extends Component<AppProps, AppState> {
   }
 
   componentDidUpdate() {
+    this.syncMermaidCacheScope();
     if (pluginCenter.mathjax) {
       this.handleUpdateMathjax();
     }
     if (pluginCenter.mermaid) {
-      this.handleUpdateMermaid();
+      const signature = this.getMermaidRenderSignature();
+      if (signature !== this.mermaidRenderSignature) {
+        this.mermaidRenderSignature = signature;
+        const misses = this.restoreMermaidCache();
+        if (misses.length) {
+          this.handleUpdateMermaid();
+        }
+      }
     }
   }
 
@@ -177,6 +217,9 @@ class App extends Component<AppProps, AppState> {
     document.removeEventListener("webkitfullscreenchange", this.solveScreenChange);
     document.removeEventListener("mozfullscreenchange", this.solveScreenChange);
     document.removeEventListener("MSFullscreenChange", this.solveScreenChange);
+    if (this.syncScrollReleaseFrame !== null) this.cancelFrame(this.syncScrollReleaseFrame);
+    this.handleUpdateMermaid.cancel?.();
+    this.mermaidCache.clear();
   }
 
   setRuntimeUser = (user) => {
@@ -197,10 +240,6 @@ class App extends Component<AppProps, AppState> {
     const windowAny = window as any;
     return windowAny[DATA_STORE_USER_ID_KEY] || windowAny[CURRENT_USER_ID_KEY] || 0;
   };
-
-  setCurrentIndex(index: number, _event?: unknown) {
-    this.index = index;
-  }
 
   hasSessionCookie = () => {
     if (typeof document === "undefined") return false;
@@ -460,6 +499,18 @@ class App extends Component<AppProps, AppState> {
     this.props.dialog.setRenameFileOpen(true);
   };
 
+  handleDocumentNavigatorOpen = () => {
+    this.setState({documentNavigatorOpen: true});
+  };
+
+  handleDocumentNavigatorClose = () => {
+    this.setState({documentNavigatorOpen: false, documentNavigatorPinned: false});
+  };
+
+  handleDocumentNavigatorPinnedChange = (documentNavigatorPinned: boolean) => {
+    this.setState({documentNavigatorPinned, documentNavigatorOpen: true});
+  };
+
   handleAuthClose = () => {
     this.setState({authVisible: false});
   };
@@ -545,15 +596,13 @@ class App extends Component<AppProps, AppState> {
       .then((module) => {
         const mermaid: any = module.default || module;
         this.mermaid = mermaid;
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          flowchart: {
-            htmlLabels: false,
-          },
-        });
+        mermaid.initialize(PLAINLY_MERMAID_CONFIG);
         (pluginCenter as any).mermaid = true;
-        this.handleUpdateMermaid();
+        this.syncMermaidCacheScope();
+        this.mermaidRenderSignature = this.getMermaidRenderSignature();
+        if (this.restoreMermaidCache().length) {
+          this.handleUpdateMermaid();
+        }
       })
       .catch((error) => {
         console.log(error);
@@ -571,20 +620,67 @@ class App extends Component<AppProps, AppState> {
     }
   };
 
-  handleScroll = () => {
-    if (this.props.navbar.isSyncScroll) {
-      const {markdownEditor} = this.props.content;
-      const cmData = markdownEditor.getScrollInfo();
-      const editorToTop = cmData.top;
-      const editorScrollHeight = cmData.height - cmData.clientHeight;
-      this.scale = (this.previewWrap.offsetHeight - this.previewContainer.offsetHeight + 55) / editorScrollHeight;
-      if (this.index === 1) {
-        this.previewContainer.scrollTop = editorToTop * this.scale;
-      } else {
-        this.editorTop = this.previewContainer.scrollTop / this.scale;
-        markdownEditor.scrollTo(null, this.editorTop);
-      }
+  requestFrame = (callback: FrameRequestCallback): number => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      return window.requestAnimationFrame(callback);
     }
+    return setTimeout(() => callback(Date.now()), 0) as unknown as number;
+  };
+
+  cancelFrame = (frame: number) => {
+    if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(frame);
+    } else {
+      clearTimeout(frame as unknown as ReturnType<typeof setTimeout>);
+    }
+  };
+
+  releaseScrollSyncLock = (source: "editor" | "preview") => {
+    if (this.syncScrollReleaseFrame !== null) this.cancelFrame(this.syncScrollReleaseFrame);
+    this.syncScrollReleaseFrame = this.requestFrame(() => {
+      this.syncScrollReleaseFrame = null;
+      if (this.syncScrollLock === source) this.syncScrollLock = null;
+    });
+  };
+
+  handleEditorScroll = () => {
+    if (!this.props.navbar.isSyncScroll || this.syncScrollLock === "preview") return;
+    const {markdownEditor} = this.props.content;
+    if (!markdownEditor || !this.previewContainer) return;
+    const scrollInfo = markdownEditor.getScrollInfo();
+    const anchors = this.previewWrap
+      ? buildLiveHeadingAnchors({markdownEditor, previewContainer: this.previewContainer, previewRoot: this.previewWrap})
+      : null;
+    const targetPreviewTop = mapEditorToPreviewByAnchors(anchors, scrollInfo.top) ?? mapScrollByRatio(
+      scrollInfo.top,
+      scrollInfo.height,
+      scrollInfo.clientHeight,
+      this.previewContainer.scrollHeight,
+      this.previewContainer.clientHeight,
+    );
+    this.syncScrollLock = "editor";
+    this.previewContainer.scrollTop = targetPreviewTop;
+    this.releaseScrollSyncLock("editor");
+  };
+
+  handlePreviewScroll = () => {
+    if (!this.props.navbar.isSyncScroll || this.syncScrollLock === "editor") return;
+    const {markdownEditor} = this.props.content;
+    if (!markdownEditor || !this.previewContainer) return;
+    const scrollInfo = markdownEditor.getScrollInfo();
+    const anchors = this.previewWrap
+      ? buildLiveHeadingAnchors({markdownEditor, previewContainer: this.previewContainer, previewRoot: this.previewWrap})
+      : null;
+    const targetEditorTop = mapPreviewToEditorByAnchors(anchors, this.previewContainer.scrollTop) ?? mapScrollByRatio(
+      this.previewContainer.scrollTop,
+      this.previewContainer.scrollHeight,
+      this.previewContainer.clientHeight,
+      scrollInfo.height,
+      scrollInfo.clientHeight,
+    );
+    this.syncScrollLock = "preview";
+    markdownEditor.scrollTo(null, targetEditorTop);
+    this.releaseScrollSyncLock("preview");
   };
 
   handleChange = (editor: any) => {
@@ -601,6 +697,84 @@ class App extends Component<AppProps, AppState> {
 
   handleBlur = () => {
     this.focus = false;
+    this.handleUpdateMermaid.flush?.();
+  };
+
+  getMermaidRenderSignature = () =>
+    [
+      this.getMermaidDocumentKey(),
+      this.props.content.content || "",
+      this.props.navbar.templateNum,
+      this.props.navbar.codeNum,
+    ].join("\u0000");
+
+  getMermaidDocumentKey = () => this.props.content.documentUuid || UNSAVED_MERMAID_CACHE_DOCUMENT_KEY;
+
+  syncMermaidCacheScope = () => {
+    const documentKey = this.getMermaidDocumentKey();
+    if (documentKey !== this.mermaidCacheDocumentKey) {
+      this.mermaidCache.clear();
+      this.mermaidCacheDocumentKey = documentKey;
+    }
+    return documentKey;
+  };
+
+  getMermaidCacheKey = (source: string, occurrence: number) => JSON.stringify([source, occurrence]);
+
+  getMermaidSourceFromCacheKey = (key: string) => {
+    try {
+      const [source] = JSON.parse(key);
+      return typeof source === "string" ? source : null;
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  restoreMermaidCache = (): MermaidNode[] => {
+    this.syncMermaidCacheScope();
+    if (!this.previewWrap) {
+      return [];
+    }
+    const occurrences = new Map<string, number>();
+    const presentKeys = new Set<string>();
+    const misses: MermaidNode[] = [];
+    const nodes = Array.from(this.previewWrap.querySelectorAll(".mermaid")) as MermaidNode[];
+
+    nodes.forEach((node) => {
+      if (node.getAttribute("data-processed")) {
+        const cacheKey = node.__plainlyMermaidCacheKey;
+        if (cacheKey) {
+          presentKeys.add(cacheKey);
+          const source = this.getMermaidSourceFromCacheKey(cacheKey);
+          if (source !== null) {
+            occurrences.set(source, (occurrences.get(source) || 0) + 1);
+          }
+        }
+        return;
+      }
+
+      const source = node.textContent.trim();
+      const occurrence = occurrences.get(source) || 0;
+      occurrences.set(source, occurrence + 1);
+      const cacheKey = this.getMermaidCacheKey(source, occurrence);
+      node.__plainlyMermaidCacheKey = cacheKey;
+      presentKeys.add(cacheKey);
+      const cachedSvg = this.mermaidCache.get(cacheKey);
+      if (cachedSvg === undefined) {
+        misses.push(node);
+        return;
+      }
+      node.innerHTML = cachedSvg;
+      node.setAttribute("data-processed", "true");
+    });
+
+    this.mermaidCache.forEach((_svg, cacheKey) => {
+      if (!presentKeys.has(cacheKey)) {
+        this.mermaidCache.delete(cacheKey);
+      }
+    });
+
+    return misses;
   };
 
   handleDrop = (_instance: any, e: any) => {
@@ -627,18 +801,36 @@ class App extends Component<AppProps, AppState> {
     if (!this.mermaid || !this.previewWrap) {
       return;
     }
-    const nodes = (Array.from(this.previewWrap.querySelectorAll(".mermaid")) as HTMLElement[]).filter(
+    const documentKey = this.syncMermaidCacheScope();
+    const nodes = this.restoreMermaidCache().filter(
       (node) => !node.getAttribute("data-processed"),
     );
     if (!nodes.length) {
       return;
     }
-    if (typeof this.mermaid.run === "function") {
-      this.mermaid.run({nodes});
-      return;
-    }
-    if (typeof this.mermaid.init === "function") {
-      this.mermaid.init(undefined, nodes);
+    const cacheRenderedNodes = () => {
+      if (this.mermaidCacheDocumentKey !== documentKey || this.getMermaidDocumentKey() !== documentKey) {
+        return;
+      }
+      nodes.forEach((node) => {
+        const cacheKey = node.__plainlyMermaidCacheKey;
+        if (cacheKey && node.getAttribute("data-processed")) {
+          this.mermaidCache.set(cacheKey, node.innerHTML);
+        }
+      });
+    };
+    try {
+      const result =
+        typeof this.mermaid.run === "function"
+          ? this.mermaid.run({nodes})
+          : undefined;
+      if (result && typeof result.then === "function") {
+        Promise.resolve(result).then(cacheRenderedNodes).catch(console.error);
+      } else {
+        cacheRenderedNodes();
+      }
+    } catch (error) {
+      console.error(error);
     }
   };
 
@@ -653,15 +845,18 @@ class App extends Component<AppProps, AppState> {
   }
 
   render() {
-    const {codeNum, previewType} = this.props.navbar;
+    const {codeNum, previewType, templateNum} = this.props.navbar;
     const {isEditAreaOpen, isPreviewAreaOpen, isStyleEditorOpen, isImmersiveEditing} = this.props.view;
     const {isSearchOpen} = this.props.dialog;
     const {content, documentName, documentUpdatedAt} = this.props.content;
+    const {documentNavigatorOpen, documentNavigatorPinned} = this.state;
     const categoryName = this.props.content.documentCategoryName || DEFAULT_CATEGORY_NAME;
     const markdownLength = countVisibleChars(content || "");
     const lastSavedText = documentUpdatedAt ? new Date(documentUpdatedAt).toLocaleString() : "未保存";
 
-    const parseHtml = codeNum === 0 ? markdownParserWechat.render(content) : markdownParser.render(content);
+    const activeParser = codeNum === 0 ? markdownParserWechat : markdownParser;
+    const rawHtml = renderMarkdownWithHeadingAnchors(content, activeParser);
+    const parseHtml = resolveThemeHtmlForTemplate(templateNum, rawHtml);
 
     const mdEditingClass = classnames({
       "nice-md-editing": !isImmersiveEditing,
@@ -695,15 +890,35 @@ class App extends Component<AppProps, AppState> {
       "nice-status-bar-hide": isImmersiveEditing,
     });
 
+    const appClass = classnames({
+      App: true,
+      "nice-document-navigator-pinned": documentNavigatorOpen && documentNavigatorPinned,
+    });
+
+    const documentNavigatorButton = (
+      <Tooltip title="文档导航">
+        <Button
+          type="text"
+          size="small"
+          className="nice-document-navigator-trigger"
+          icon={<FolderOpenOutlined />}
+          onClick={this.handleDocumentNavigatorOpen}
+          aria-label="文档导航"
+        />
+      </Tooltip>
+    );
+
+    const documentNavigatorUserId = this.isRemoteMode && this.state.currentUser ? this.state.currentUser.id : 0;
+
     return (
       <appContext.Consumer>
         {(ctx) => {
           const defaultTitle = ctx?.defaultTitle || "";
           return (
-            <div className="App">
+            <div className={appClass}>
               <Navbar title={defaultTitle} />
               <div className={textContainerClass}>
-                <div id="nice-md-editor" className={mdEditingClass} onMouseOver={(e) => this.setCurrentIndex(1, e)}>
+                <div id="nice-md-editor" className={mdEditingClass}>
                   {isSearchOpen && <SearchBox />}
                   <CodeMirror
                     value={this.props.content.content}
@@ -720,7 +935,7 @@ class App extends Component<AppProps, AppState> {
                       },
                     }}
                     onChange={this.handleChange}
-                    onScroll={this.handleScroll}
+                    onScroll={this.handleEditorScroll}
                     onFocus={this.handleFocus}
                     onBlur={this.handleBlur}
                     onDrop={this.handleDrop}
@@ -728,12 +943,12 @@ class App extends Component<AppProps, AppState> {
                     ref={this.getInstance}
                   />
                 </div>
-                <div id="nice-rich-text" className={richTextClass} onMouseOver={(e) => this.setCurrentIndex(2, e)}>
+                <div id="nice-rich-text" className={richTextClass}>
                   <Sidebar />
                   <div
                     id={BOX_ID}
                     className={richTextBoxClass}
-                    onScroll={this.handleScroll}
+                    onScroll={this.handlePreviewScroll}
                     ref={(node) => {
                       this.previewContainer = node;
                     }}
@@ -764,6 +979,7 @@ class App extends Component<AppProps, AppState> {
               <div className={statusBarClass}>
                 {this.isRemoteMode ? (
                   <div className="nice-status-item nice-status-item-main">
+                    {documentNavigatorButton}
                     <Button type="link" size="small" onClick={this.handleAuthOpen}>
                       {this.state.currentUser
                         ? `已登录：${this.state.currentUser.username || this.state.currentUser.account}`
@@ -791,6 +1007,7 @@ class App extends Component<AppProps, AppState> {
                   </div>
                 ) : (
                   <div className="nice-status-item nice-status-item-main">
+                    {documentNavigatorButton}
                     <b>离线模式</b>&nbsp;
                     <b>归属目录: </b>
                     <button
@@ -830,6 +1047,15 @@ class App extends Component<AppProps, AppState> {
                 onRegister={this.handleRegister}
                 onUpdatePassword={this.handleUpdatePassword}
                 onLogout={this.handleLogout}
+              />
+              <DocumentNavigator
+                open={documentNavigatorOpen}
+                pinned={documentNavigatorPinned}
+                userId={documentNavigatorUserId}
+                isRemoteMode={this.isRemoteMode}
+                content={this.props.content}
+                onClose={this.handleDocumentNavigatorClose}
+                onPinnedChange={this.handleDocumentNavigatorPinnedChange}
               />
             </div>
           );

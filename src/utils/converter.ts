@@ -1,4 +1,5 @@
 import juice from "juice";
+import {stripHeadingAnchorAttributes} from "./syncScroll";
 import {message} from "antd";
 import {
   BASIC_THEME_ID,
@@ -104,7 +105,7 @@ const inlineMermaidSvgStyles = (root) => {
   }
   const svgs = root.querySelectorAll(".mermaid svg");
   svgs.forEach((svg) => {
-    const nodes = [svg, ...svg.querySelectorAll("*")];
+    const nodes = Array.from(svg.querySelectorAll("*"));
     inlineComputedStyles(nodes, SVG_STYLE_PROPS);
   });
 };
@@ -220,6 +221,7 @@ export const solveHtml = () => {
     item.setAttribute("data-tool", "mdnice编辑器");
   }
   let html = element.innerHTML;
+  html = stripHeadingAnchorAttributes(html);
   html = html.replace(/<mjx-container (class="inline.+?)<\/mjx-container>/g, "<span $1</span>");
   html = html.replace(/\s<span class="inline/g, '&nbsp;<span class="inline');
   html = html.replace(/svg><\/span>\s/g, "svg></span>&nbsp;");

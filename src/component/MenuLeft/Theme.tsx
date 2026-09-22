@@ -2,8 +2,9 @@ import React from "react";
 import {Menu, Dropdown} from "antd";
 import {observer, inject} from "mobx-react";
 
-import {TEMPLATE_OPTIONS, RIGHT_SYMBOL} from "../../utils/constant";
-import TEMPLATE from "../../template/index";
+import {RIGHT_SYMBOL} from "../../utils/constant";
+import {getThemeList, themeRegistry} from "../../theme";
+import {groupThemesForMenu, type IndexedTheme} from "./themeMenu";
 import "./Theme.css";
 
 @inject("content")
@@ -16,7 +17,8 @@ class Theme extends React.Component<any, any> {
       return;
     }
     const index = parseInt(item.key, 10);
-    const {id} = TEMPLATE_OPTIONS[index];
+    const themes = getThemeList();
+    const {id} = themes[index];
     this.props.navbar.setTemplateNum(index);
 
     // 更新style编辑器
@@ -25,7 +27,7 @@ class Theme extends React.Component<any, any> {
       // 切换自定义自动打开css编辑
       this.props.view.setStyleEditorOpen(true);
     } else {
-      this.props.content.setStyle(TEMPLATE.style[id]);
+      this.props.content.setStyle(themeRegistry.resolveThemeCss(id));
     }
   };
 
@@ -34,25 +36,41 @@ class Theme extends React.Component<any, any> {
     this.props.view.setStyleEditorOpen(!isStyleEditorOpen);
   };
 
-  render() {
+  renderThemeItem = ({theme, index}: IndexedTheme) => {
     const {templateNum} = this.props.navbar;
+    return (
+      <Menu.Item key={index}>
+        <div id={`nice-menu-theme-${theme.id}`} className="nice-themeselect-theme-item">
+          <span>
+            <span className="nice-themeselect-theme-item-flag">{templateNum === index && <span>{RIGHT_SYMBOL}</span>}</span>
+            <span className="nice-themeselect-theme-item-name">{theme.name}</span>
+            {theme.isNew && <span className="nice-themeselect-theme-item-new">new</span>}
+          </span>
+          <span className="nice-themeselect-theme-item-author">{theme.author}</span>
+        </div>
+      </Menu.Item>
+    );
+  };
 
+  render() {
+    const {groups, custom} = groupThemesForMenu(getThemeList());
     const mdMenu = (
-      <Menu onClick={this.changeTemplate}>
-        {TEMPLATE_OPTIONS.map((option, index) => (
-          <Menu.Item key={index}>
-            <div id={`nice-menu-theme-${option.id}`} className="nice-themeselect-theme-item">
-              <span>
-                <span className="nice-themeselect-theme-item-flag">
-                  {templateNum === index && <span>{RIGHT_SYMBOL}</span>}
-                </span>
-                <span className="nice-themeselect-theme-item-name">{option.name}</span>
-                {option.isNew && <span className="nice-themeselect-theme-item-new">new</span>}
-              </span>
-              <span className="nice-themeselect-theme-item-author">{option.author}</span>
-            </div>
-          </Menu.Item>
+      <Menu className="nice-themeselect-root-menu" onClick={this.changeTemplate}>
+        {groups.map((group) => (
+          <Menu.SubMenu
+            key={`theme-group-${group.key}`}
+            popupClassName="nice-theme-submenu-popup"
+            title={
+              <div className="nice-themeselect-group-title">
+                <span>{group.label}</span>
+                <span className="nice-themeselect-group-count">{group.themes.length}</span>
+              </div>
+            }
+          >
+            {group.themes.map(this.renderThemeItem)}
+          </Menu.SubMenu>
         ))}
+        {custom && this.renderThemeItem(custom)}
         <Menu.Divider />
         <Menu.Item key="view-css" className="nice-themeselect-menu-item" onClick={this.toggleStyleEditor}>
           <div id="nice-menu-view-css" className="nice-themeselect-theme-item">
@@ -77,4 +95,3 @@ class Theme extends React.Component<any, any> {
 }
 
 export default Theme;
-

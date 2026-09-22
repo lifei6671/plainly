@@ -12,10 +12,27 @@ import "antd/dist/antd.css";
 import {observer, inject} from "mobx-react";
 
 import "../utils/styleMirror.css";
-import {TEMPLATE_CUSTOM_NUM, TEMPLATE_OPTIONS} from "../utils/constant";
-import TEMPLATE from "../template/index";
+import {getThemeList, themeRegistry} from "../theme";
+import type {ThemeDefinition} from "../theme/types";
 
 const CodeMirrorAny = CodeMirror as any;
+const CUSTOM_STYLE_PREFIX = "/*自定义样式，实时生效*/\n\n";
+
+export const getStyleEditorChangeAction = (theme: ThemeDefinition | undefined, isFocused: boolean) => {
+  if (!isFocused || !theme || theme.mode === "component") return undefined;
+  return theme.id === "custom" ? "save-custom" : "confirm-copy";
+};
+
+export const getCustomStyleFromTheme = (theme: ThemeDefinition | undefined) => {
+  if (!theme || theme.id === "custom" || theme.mode === "component") return undefined;
+
+  const css = themeRegistry.resolveThemeCss(theme.id);
+  return css === undefined ? undefined : `${CUSTOM_STYLE_PREFIX}${css}`;
+};
+
+export const getCustomStyleFromThemeIndex = (templateNum: number) => {
+  return getCustomStyleFromTheme(getThemeList()[templateNum]);
+};
 
 @inject("content")
 @inject("navbar")
@@ -44,10 +61,11 @@ class StyleEditor extends Component<any, any> {
       okText: "确定",
       onOk: () => {
         const {templateNum} = this.props.navbar;
-        const {id} = TEMPLATE_OPTIONS[templateNum];
-        const style = `/*自定义样式，实时生效*/\n\n` + TEMPLATE.style[id];
+        const style = getCustomStyleFromThemeIndex(templateNum);
+        if (style === undefined) return;
+
         this.props.content.setCustomStyle(style);
-        this.props.navbar.setTemplateNum(TEMPLATE_CUSTOM_NUM);
+        this.props.navbar.setTemplateNum(getThemeList().findIndex((theme) => theme.id === "custom"));
       },
       onCancel: () => {},
     });
@@ -55,10 +73,12 @@ class StyleEditor extends Component<any, any> {
 
   changeStyle = (editor) => {
     const {templateNum} = this.props.navbar;
+    const theme = getThemeList()[templateNum];
+    const action = getStyleEditorChangeAction(theme, this.focus);
     // focus状态很重要，初始化时被调用则不会进入条件
-    if (this.focus && templateNum !== TEMPLATE_CUSTOM_NUM) {
+    if (action === "confirm-copy") {
       this.showConfirm();
-    } else if (this.focus) {
+    } else if (action === "save-custom") {
       const style = editor.getValue();
       this.props.content.setCustomStyle(style);
     }
@@ -73,6 +93,7 @@ class StyleEditor extends Component<any, any> {
   };
 
   render() {
+    const theme = getThemeList()[this.props.navbar.templateNum];
     return (
       <CodeMirrorAny
         value={this.props.content.style}
@@ -82,6 +103,7 @@ class StyleEditor extends Component<any, any> {
           mode: "text/css",
           lineWrapping: true,
           lineNumbers: false,
+          readOnly: theme?.mode === "component",
         }}
         id="css-editor"
         onChange={this.changeStyle}

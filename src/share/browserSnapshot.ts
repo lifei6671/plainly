@@ -2,6 +2,7 @@ import type {IDataStore} from "../data/store/IDataStore";
 import {solveHtml} from "../utils/converter";
 import {BOX_ID, LAYOUT_ID} from "../utils/constant";
 import {extractVisibleText, markdownParser, markdownParserWechat} from "../utils/helper";
+import {PLAINLY_MERMAID_CONFIG} from "../utils/mermaidConfig";
 import {
   SHARE_EXCERPT_SNAPSHOT_MAX_CHARS,
   SHARE_TITLE_SNAPSHOT_MAX_CHARS,
@@ -15,14 +16,6 @@ const SHARE_MATHJAX_READY_TIMEOUT_MS = 5000;
 const SHARE_MERMAID_READY_TIMEOUT_MS = 5000;
 const SHARE_MERMAID_READY_POLL_MS = 50;
 const SHARE_PREVIEW_READY_POLL_MS = 50;
-const SHARE_MERMAID_SNAPSHOT_CONFIG = {
-  startOnLoad: false,
-  securityLevel: "strict",
-  flowchart: {
-    htmlLabels: false,
-  },
-};
-
 let shareSnapshotMathJaxLoading: Promise<void> | null = null;
 const latestIssuedSnapshotVersions = new Map<string, number>();
 
@@ -285,12 +278,10 @@ const ensurePreviewMermaidSnapshotReady = async (markdown: string): Promise<bool
         const module = await import("mermaid");
         const mermaid: any = module.default || module;
         if (typeof mermaid.initialize === "function") {
-          mermaid.initialize(SHARE_MERMAID_SNAPSHOT_CONFIG);
+          mermaid.initialize(PLAINLY_MERMAID_CONFIG);
         }
         if (typeof mermaid.run === "function") {
           await mermaid.run({nodes: pendingNodes});
-        } else if (typeof mermaid.init === "function") {
-          mermaid.init(undefined, pendingNodes);
         }
       } catch (_error) {
         // 交给 markdown fallback，避免快照流程被图表渲染阻塞。

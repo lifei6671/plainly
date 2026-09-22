@@ -1,10 +1,17 @@
 .App {
   --nice-status-bar-height: 28px;
   height: 100vh;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   font-family: "PingFang SC", BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serifhtml, body;
   font-size: 16px;
+}
+
+.App.nice-document-navigator-pinned {
+  padding-left: 320px;
+  box-sizing: border-box;
+  transition: padding-left 0.2s;
 }
 
 .nice-text-container {
@@ -117,6 +124,11 @@
   text-overflow: ellipsis;
 }
 
+.nice-document-navigator-trigger {
+  margin-right: 4px;
+  color: rgba(0, 0, 0, 0.65);
+}
+
 .nice-status-category-trigger {
   padding: 0;
   border: 0;
@@ -158,6 +170,10 @@
     display: none;
   }
   .nice-status-bar {
+    display: none;
+  }
+  .nice-document-navigator,
+  .nice-document-navigator-pinned-panel {
     display: none;
   }
   .nice-wx-box {
