@@ -1,0 +1,134 @@
+.nice-document-navigator {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+
+.nice-document-navigator-pinned-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1000;
+  width: 320px;
+  border-right: 1px solid #f0f0f0;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.08);
+}
+
+.nice-document-navigator-header {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 0 18px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.nice-document-navigator-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.nice-document-navigator-title strong {
+  font-size: 16px;
+}
+
+.nice-document-navigator-source {
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+}
+
+.nice-document-navigator-actions {
+  display: flex;
+  align-items: center;
+}
+
+.nice-document-navigator-actions .ant-btn {
+  color: rgba(0, 0, 0, 0.65);
+}
+
+.nice-document-navigator-actions .nice-document-navigator-pin-active {
+  color: #1677ff;
+}
+
+.nice-document-navigator-tree-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.nice-document-navigator-tree {
+  width: 100%;
+}
+
+.nice-document-navigator-tree .ant-tree-node-content-wrapper {
+  width: calc(100% - 24px);
+}
+
+.nice-document-navigator-node {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.nice-document-navigator-node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nice-document-navigator-document-node {
+  width: 100%;
+}
+
+.nice-document-navigator-document-open {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nice-document-navigator-document-open:focus-visible {
+  outline: 1px solid #1677ff;
+  outline-offset: 2px;
+}
+
+.nice-document-navigator-document-node.active .nice-document-navigator-node-label {
+  color: #1677ff;
+  font-weight: 600;
+}
+
+.nice-document-navigator-delete {
+  margin-left: auto;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: #ff4d4f;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.nice-document-navigator-document-node:hover .nice-document-navigator-delete,
+.nice-document-navigator-delete:focus-visible {
+  opacity: 1;
+}
+
+.nice-document-navigator-empty {
+  padding-top: 48px;
+}
+
+@media print {
+  .nice-document-navigator,
+  .nice-document-navigator-pinned-panel {
+    display: none;
+  }
+}

@@ -38,8 +38,10 @@ import appContext, {ImageHostingPreset} from "./utils/appContext";
 import {uploadAdaptor} from "./utils/imageHosting";
 import bindHotkeys, {betterTab, rightClick} from "./utils/hotkey";
 import AuthModal from "./component/Auth/AuthModal";
+import DocumentNavigator from "./component/DocumentNavigator";
 import {getConfigSync, setConfigSync} from "./utils/configStore";
-import {Button} from "antd";
+import {Button, Tooltip} from "antd";
+import {FolderOpenOutlined} from "@ant-design/icons";
 import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
 import {getDataStore} from "./data/store/index";
 import {markIndexDirty, scheduleIndexRebuild} from "./search";
@@ -70,6 +72,8 @@ type AppProps = {
 type AppState = {
   authVisible: boolean;
   currentUser: RuntimeUser;
+  documentNavigatorOpen: boolean;
+  documentNavigatorPinned: boolean;
 };
 
 @inject("content")
@@ -106,6 +110,8 @@ class App extends Component<AppProps, AppState> {
     this.state = {
       authVisible: false,
       currentUser: null,
+      documentNavigatorOpen: false,
+      documentNavigatorPinned: false,
     };
     this.handleUpdateMathjax = throttle(updateMathjax, 1500);
     this.handleUpdateMermaid = throttle(this.updateMermaid, 800);
@@ -461,6 +467,18 @@ class App extends Component<AppProps, AppState> {
     this.props.dialog.setRenameFileOpen(true);
   };
 
+  handleDocumentNavigatorOpen = () => {
+    this.setState({documentNavigatorOpen: true});
+  };
+
+  handleDocumentNavigatorClose = () => {
+    this.setState({documentNavigatorOpen: false, documentNavigatorPinned: false});
+  };
+
+  handleDocumentNavigatorPinnedChange = (documentNavigatorPinned: boolean) => {
+    this.setState({documentNavigatorPinned, documentNavigatorOpen: true});
+  };
+
   handleAuthClose = () => {
     this.setState({authVisible: false});
   };
@@ -658,6 +676,7 @@ class App extends Component<AppProps, AppState> {
     const {isEditAreaOpen, isPreviewAreaOpen, isStyleEditorOpen, isImmersiveEditing} = this.props.view;
     const {isSearchOpen} = this.props.dialog;
     const {content, documentName, documentUpdatedAt} = this.props.content;
+    const {documentNavigatorOpen, documentNavigatorPinned} = this.state;
     const categoryName = this.props.content.documentCategoryName || DEFAULT_CATEGORY_NAME;
     const markdownLength = countVisibleChars(content || "");
     const lastSavedText = documentUpdatedAt ? new Date(documentUpdatedAt).toLocaleString() : "未保存";
@@ -697,12 +716,32 @@ class App extends Component<AppProps, AppState> {
       "nice-status-bar-hide": isImmersiveEditing,
     });
 
+    const appClass = classnames({
+      App: true,
+      "nice-document-navigator-pinned": documentNavigatorOpen && documentNavigatorPinned,
+    });
+
+    const documentNavigatorButton = (
+      <Tooltip title="文档导航">
+        <Button
+          type="text"
+          size="small"
+          className="nice-document-navigator-trigger"
+          icon={<FolderOpenOutlined />}
+          onClick={this.handleDocumentNavigatorOpen}
+          aria-label="文档导航"
+        />
+      </Tooltip>
+    );
+
+    const documentNavigatorUserId = this.isRemoteMode && this.state.currentUser ? this.state.currentUser.id : 0;
+
     return (
       <appContext.Consumer>
         {(ctx) => {
           const defaultTitle = ctx?.defaultTitle || "";
           return (
-            <div className="App">
+            <div className={appClass}>
               <Navbar title={defaultTitle} />
               <div className={textContainerClass}>
                 <div id="nice-md-editor" className={mdEditingClass} onMouseOver={(e) => this.setCurrentIndex(1, e)}>
@@ -766,6 +805,7 @@ class App extends Component<AppProps, AppState> {
               <div className={statusBarClass}>
                 {this.isRemoteMode ? (
                   <div className="nice-status-item nice-status-item-main">
+                    {documentNavigatorButton}
                     <Button type="link" size="small" onClick={this.handleAuthOpen}>
                       {this.state.currentUser
                         ? `已登录：${this.state.currentUser.username || this.state.currentUser.account}`
@@ -793,6 +833,7 @@ class App extends Component<AppProps, AppState> {
                   </div>
                 ) : (
                   <div className="nice-status-item nice-status-item-main">
+                    {documentNavigatorButton}
                     <b>离线模式</b>&nbsp;
                     <b>归属目录: </b>
                     <button
@@ -832,6 +873,15 @@ class App extends Component<AppProps, AppState> {
                 onRegister={this.handleRegister}
                 onUpdatePassword={this.handleUpdatePassword}
                 onLogout={this.handleLogout}
+              />
+              <DocumentNavigator
+                open={documentNavigatorOpen}
+                pinned={documentNavigatorPinned}
+                userId={documentNavigatorUserId}
+                isRemoteMode={this.isRemoteMode}
+                content={this.props.content}
+                onClose={this.handleDocumentNavigatorClose}
+                onPinnedChange={this.handleDocumentNavigatorPinnedChange}
               />
             </div>
           );

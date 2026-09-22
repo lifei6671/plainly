@@ -24,8 +24,17 @@ jest.mock("lodash.throttle", () => (fn) => fn);
 jest.mock("antd", () => {
   return {
     Button: ({children, ...props}) => React.createElement("button", {...props, type: "button"}, children),
+    Tooltip: ({children}) => React.createElement(React.Fragment, null, children),
   };
 });
+
+jest.mock(
+  "./component/DocumentNavigator",
+  () =>
+    function DocumentNavigator() {
+      return null;
+    },
+);
 
 jest.mock(
   "./layout/Dialog",
@@ -205,6 +214,45 @@ it("renders without crashing with injected props", () => {
   const instance = new App(props);
   expect(() => instance.render()).not.toThrow();
   expect(instance.render()).toBeTruthy();
+});
+
+const renderAppContent = (instance) => instance.render().props.children({defaultTitle: ""});
+
+const findDocumentNavigatorButtonCount = (node) => {
+  if (!node || typeof node !== "object") return 0;
+  const ownCount = node.props?.["aria-label"] === "文档导航" ? 1 : 0;
+  const children = node.props?.children;
+  if (Array.isArray(children)) {
+    return ownCount + children.reduce((count, child) => count + findDocumentNavigatorButtonCount(child), 0);
+  }
+  return ownCount + findDocumentNavigatorButtonCount(children);
+};
+
+it("shows the document navigator entry in local and remote status states", () => {
+  const offline = new App(props);
+  offline.isRemoteMode = false;
+  expect(findDocumentNavigatorButtonCount(renderAppContent(offline))).toBe(1);
+
+  const remoteAnonymous = new App(props);
+  remoteAnonymous.isRemoteMode = true;
+  expect(findDocumentNavigatorButtonCount(renderAppContent(remoteAnonymous))).toBe(1);
+
+  const remoteAuthenticated = new App(props);
+  remoteAuthenticated.isRemoteMode = true;
+  remoteAuthenticated.state = {...remoteAuthenticated.state, currentUser: {id: 7, account: "demo"}};
+  expect(findDocumentNavigatorButtonCount(renderAppContent(remoteAuthenticated))).toBe(1);
+});
+
+it("adds the pinned class after the navigator callback", () => {
+  const instance = new App(props);
+  instance.setState = jest.fn((updater) => {
+    const next = typeof updater === "function" ? updater(instance.state, instance.props) : updater;
+    instance.state = {...instance.state, ...next};
+  });
+
+  instance.handleDocumentNavigatorPinnedChange(true);
+
+  expect(renderAppContent(instance).props.className).toContain("nice-document-navigator-pinned");
 });
 
 it("resolves preview HTML with the navbar template number", () => {
