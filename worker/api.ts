@@ -828,10 +828,104 @@ const migrateCategoriesPrimaryKey = async (db) => {
 
 let schemaReadyPromise = null;
 
+const REQUIRED_SCHEMA_COLUMNS = {
+  [SQLITE_TABLES.users]: [
+    "id",
+    "account",
+    "password",
+    "password_salt",
+    "registered_at",
+    "last_login_at",
+    "last_login_ip",
+    "status",
+    "password_changed_at",
+    "token_version",
+    "updated_at",
+  ],
+  [SQLITE_TABLES.sessions]: [
+    "id",
+    "user_id",
+    "device_id",
+    "refresh_token_hash",
+    "created_at",
+    "expires_at",
+    "revoked_at",
+    "last_seen_at",
+    "ip",
+    "ua",
+  ],
+  [SQLITE_TABLES.categories]: ["id", "user_id", "category_id", "name", "created_at", "updated_at", "source", "version"],
+  [SQLITE_TABLES.documents]: [
+    "id",
+    "user_id",
+    "document_id",
+    "name",
+    "category",
+    "category_id",
+    "created_at",
+    "updated_at",
+    "content_norm",
+    "char_count",
+    "source",
+    "version",
+  ],
+  [SQLITE_TABLES.documentContent]: ["document_row_id", "user_id", "content"],
+  [SQLITE_TABLES.settings]: ["id", "user_id", "key", "value"],
+  [SQLITE_TABLES.documentShares]: [
+    "id",
+    "user_id",
+    "document_id",
+    "share_id",
+    "enabled",
+    "listed",
+    "access_type",
+    "duration_type",
+    "start_at",
+    "end_at",
+    "password_hash",
+    "password_salt",
+    "password_algo",
+    "password_version",
+    "html_snapshot",
+    "title_snapshot",
+    "excerpt_snapshot",
+    "snapshot_version",
+    "snapshot_hash",
+    "last_snapshot_at",
+    "created_at",
+    "updated_at",
+  ],
+  [SQLITE_TABLES.documentShareAssets]: ["id", "user_id", "document_id", "asset_id", "snapshot_hash", "updated_at"],
+};
+
+const hasRequiredColumns = (columns, requiredColumns) => {
+  const names = new Set(columns.map((column) => column.name));
+  return requiredColumns.every((name) => names.has(name));
+};
+
+const hasIdPrimaryKey = (columns) => columns.some((column) => column.name === "id" && column.pk === 1);
+
+const hasCurrentSchema = async (db) => {
+  const tableEntries = await Promise.all(
+    Object.entries(REQUIRED_SCHEMA_COLUMNS).map(async ([table, requiredColumns]) => {
+      const columns = await tableInfo(db, table);
+      return {table, columns, requiredColumns};
+    }),
+  );
+  const tablesReady = tableEntries.every(({columns, requiredColumns}) => hasRequiredColumns(columns, requiredColumns));
+  if (!tablesReady) return false;
+  const columnsByTable = new Map(tableEntries.map(({table, columns}) => [table, columns]));
+  return (
+    hasIdPrimaryKey(columnsByTable.get(SQLITE_TABLES.categories) || []) &&
+    hasIdPrimaryKey(columnsByTable.get(SQLITE_TABLES.documents) || [])
+  );
+};
+
 // 初始化 D1 结构与必要字段
 const ensureSchema = async (db) => {
   if (schemaReadyPromise) return schemaReadyPromise;
   schemaReadyPromise = (async () => {
+    if (await hasCurrentSchema(db)) return;
     await runStatements(db, "PRAGMA foreign_keys = ON;");
     await runStatements(db, SQLITE_DDL.users);
     await runStatements(db, SQLITE_DDL.sessions);

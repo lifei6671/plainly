@@ -202,7 +202,7 @@
   padding: 0 6px 0 26px;
   border-radius: 11px;
   color: rgba(0, 0, 0, 0.72);
-  transition: background-color 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 
 .nice-document-navigator-tree .ant-tree-node-content-wrapper:hover .nice-document-navigator-document-node {
@@ -253,6 +253,17 @@
 .nice-document-navigator-document-node.active .nice-document-navigator-node-label {
   color: rgba(0, 0, 0, 0.9);
   font-weight: 600;
+}
+
+.nice-document-navigator-document-node.opening {
+  background: #f0f6ff;
+  color: #0958d9;
+}
+
+.nice-document-navigator-document-node.opening .nice-document-navigator-node-label,
+.nice-document-navigator-document-node.opening .nice-document-navigator-document-open > .anticon {
+  color: inherit;
+  transition: color 0.15s ease;
 }
 
 .nice-document-navigator-delete {

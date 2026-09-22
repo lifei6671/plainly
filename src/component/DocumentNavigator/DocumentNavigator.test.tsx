@@ -1,5 +1,6 @@
 /* eslint-disable import/first */
 import React from "react";
+import {LoadingOutlined} from "@ant-design/icons";
 
 declare const jest: any;
 declare const it: any;
@@ -64,6 +65,16 @@ const attachState = (component: any) => {
   });
 };
 
+const createDeferred = () => {
+  let resolve: (value: string) => void;
+  let reject: (reason: Error) => void;
+  const promise = new Promise<string>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return {promise, resolve, reject};
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
 });
@@ -112,6 +123,84 @@ it("loads a document into the editor and closes only when not pinned", async () 
   (pinnedComponent as any).state.categories = [category];
   await pinnedComponent.openDocument(document as any);
   expect(pinnedProps.onClose).not.toHaveBeenCalled();
+});
+
+it("shows loading feedback immediately while opening a document", async () => {
+  const deferred = createDeferred();
+  const store = createStore();
+  store.getDocumentContent.mockReturnValue(deferred.promise);
+  getDataStore.mockReturnValue(store);
+  const component = new DocumentNavigator(createProps() as any);
+  attachState(component);
+
+  const opening = component.openDocument(document as any);
+  const title = component.renderDocumentTitle(document as any);
+  const openButton = title.props.children[0];
+
+  expect(component.state.openingDocumentId).toBe("document-1");
+  expect(title.props.className).toContain("opening");
+  expect(openButton.props["aria-busy"]).toBe(true);
+  expect(openButton.props.children[0].type).toBe(LoadingOutlined);
+
+  await component.openDocument(document as any);
+  expect(store.getDocumentContent).toHaveBeenCalledTimes(1);
+
+  deferred.resolve("# 示例");
+  await opening;
+});
+
+it("clears loading feedback after a document opens or fails", async () => {
+  const store = createStore();
+  getDataStore.mockReturnValue(store);
+  const props = createProps();
+  const component = new DocumentNavigator(props as any);
+  attachState(component);
+  (component as any).state.categories = [category];
+
+  await component.openDocument(document as any);
+
+  expect(component.state.openingDocumentId).toBeNull();
+  expect(props.content.setContent).toHaveBeenCalledWith("# 示例");
+  expect(props.content.markdownEditor.setValue).toHaveBeenCalledWith("# 示例");
+
+  store.getDocumentContent.mockRejectedValueOnce(new Error("network failed"));
+  const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+  await component.openDocument(document as any);
+  consoleError.mockRestore();
+
+  expect(component.state.openingDocumentId).toBeNull();
+  expect(message.error).toHaveBeenCalledWith("加载文档失败");
+});
+
+it("keeps the latest document when earlier opening requests resolve later", async () => {
+  const first = createDeferred();
+  const second = createDeferred();
+  const secondDocument = {...document, document_id: "document-2", name: "第二篇文档"};
+  const store = createStore();
+  store.getDocumentContent.mockImplementation((documentId: string) =>
+    documentId === "document-1" ? first.promise : second.promise,
+  );
+  getDataStore.mockReturnValue(store);
+  const props = createProps();
+  const component = new DocumentNavigator(props as any);
+  attachState(component);
+  (component as any).state.categories = [category];
+
+  const openingFirst = component.openDocument(document as any);
+  const openingSecond = component.openDocument(secondDocument as any);
+
+  first.resolve("# 第一篇");
+  await openingFirst;
+
+  expect(component.state.openingDocumentId).toBe("document-2");
+  expect(props.content.setContent).not.toHaveBeenCalled();
+
+  second.resolve("# 第二篇");
+  await openingSecond;
+
+  expect(component.state.openingDocumentId).toBeNull();
+  expect(props.content.setDocumentUuid).toHaveBeenCalledWith("document-2");
+  expect(props.content.setContent).toHaveBeenCalledWith("# 第二篇");
 });
 
 it("keeps empty directories visible in the tree", () => {

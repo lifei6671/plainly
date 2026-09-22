@@ -6,6 +6,7 @@ import "codemirror/mode/markdown/markdown";
 import "antd/dist/antd.css";
 import {observer, inject} from "mobx-react";
 import classnames from "classnames";
+import debounce from "lodash.debounce";
 import throttle from "lodash.throttle";
 
 import Dialog from "./layout/Dialog";
@@ -58,6 +59,11 @@ const SESSION_FLAG_COOKIE = "plainly_session";
 const DATA_STORE_USER_ID_KEY = "__DATA_STORE_USER_ID__";
 const CURRENT_USER_ID_KEY = "__CURRENT_USER_ID__";
 const DATA_STORE_MODE_KEY = "__DATA_STORE_MODE__";
+const UNSAVED_MERMAID_CACHE_DOCUMENT_KEY = "__plainly_unsaved_mermaid_document__";
+
+type MermaidNode = HTMLElement & {
+  __plainlyMermaidCacheKey?: string;
+};
 
 type RuntimeUser = {
   id: number;
@@ -83,6 +89,11 @@ type AppState = {
   documentNavigatorPinned: boolean;
 };
 
+type DebouncedMermaidUpdate = (() => void) & {
+  cancel?: () => void;
+  flush?: () => void;
+};
+
 @inject("content")
 @inject("navbar")
 @inject("view")
@@ -102,9 +113,15 @@ class App extends Component<AppProps, AppState> {
 
   mermaid: any = null;
 
+  mermaidRenderSignature: string;
+
+  mermaidCache = new Map<string, string>();
+
+  mermaidCacheDocumentKey: string;
+
   handleUpdateMathjax: () => void;
 
-  handleUpdateMermaid: () => void;
+  handleUpdateMermaid: DebouncedMermaidUpdate;
 
   isRemoteMode: boolean;
 
@@ -119,7 +136,9 @@ class App extends Component<AppProps, AppState> {
       documentNavigatorPinned: false,
     };
     this.handleUpdateMathjax = throttle(updateMathjax, 1500);
-    this.handleUpdateMermaid = throttle(this.updateMermaid, 800);
+    this.mermaidCacheDocumentKey = this.getMermaidDocumentKey();
+    this.mermaidRenderSignature = this.getMermaidRenderSignature();
+    this.handleUpdateMermaid = debounce(this.updateMermaid, 800, {leading: false, trailing: true});
     this.isRemoteMode = this.resolveDataStoreMode() === "remote";
     this.apiBase =
       (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) ||
@@ -176,11 +195,19 @@ class App extends Component<AppProps, AppState> {
   }
 
   componentDidUpdate() {
+    this.syncMermaidCacheScope();
     if (pluginCenter.mathjax) {
       this.handleUpdateMathjax();
     }
     if (pluginCenter.mermaid) {
-      this.handleUpdateMermaid();
+      const signature = this.getMermaidRenderSignature();
+      if (signature !== this.mermaidRenderSignature) {
+        this.mermaidRenderSignature = signature;
+        const misses = this.restoreMermaidCache();
+        if (misses.length) {
+          this.handleUpdateMermaid();
+        }
+      }
     }
   }
 
@@ -190,6 +217,8 @@ class App extends Component<AppProps, AppState> {
     document.removeEventListener("mozfullscreenchange", this.solveScreenChange);
     document.removeEventListener("MSFullscreenChange", this.solveScreenChange);
     if (this.syncScrollReleaseFrame !== null) this.cancelFrame(this.syncScrollReleaseFrame);
+    this.handleUpdateMermaid.cancel?.();
+    this.mermaidCache.clear();
   }
 
   setRuntimeUser = (user) => {
@@ -574,7 +603,11 @@ class App extends Component<AppProps, AppState> {
           },
         });
         (pluginCenter as any).mermaid = true;
-        this.handleUpdateMermaid();
+        this.syncMermaidCacheScope();
+        this.mermaidRenderSignature = this.getMermaidRenderSignature();
+        if (this.restoreMermaidCache().length) {
+          this.handleUpdateMermaid();
+        }
       })
       .catch((error) => {
         console.log(error);
@@ -669,6 +702,84 @@ class App extends Component<AppProps, AppState> {
 
   handleBlur = () => {
     this.focus = false;
+    this.handleUpdateMermaid.flush?.();
+  };
+
+  getMermaidRenderSignature = () =>
+    [
+      this.getMermaidDocumentKey(),
+      this.props.content.content || "",
+      this.props.navbar.templateNum,
+      this.props.navbar.codeNum,
+    ].join("\u0000");
+
+  getMermaidDocumentKey = () => this.props.content.documentUuid || UNSAVED_MERMAID_CACHE_DOCUMENT_KEY;
+
+  syncMermaidCacheScope = () => {
+    const documentKey = this.getMermaidDocumentKey();
+    if (documentKey !== this.mermaidCacheDocumentKey) {
+      this.mermaidCache.clear();
+      this.mermaidCacheDocumentKey = documentKey;
+    }
+    return documentKey;
+  };
+
+  getMermaidCacheKey = (source: string, occurrence: number) => JSON.stringify([source, occurrence]);
+
+  getMermaidSourceFromCacheKey = (key: string) => {
+    try {
+      const [source] = JSON.parse(key);
+      return typeof source === "string" ? source : null;
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  restoreMermaidCache = (): MermaidNode[] => {
+    this.syncMermaidCacheScope();
+    if (!this.previewWrap) {
+      return [];
+    }
+    const occurrences = new Map<string, number>();
+    const presentKeys = new Set<string>();
+    const misses: MermaidNode[] = [];
+    const nodes = Array.from(this.previewWrap.querySelectorAll(".mermaid")) as MermaidNode[];
+
+    nodes.forEach((node) => {
+      if (node.getAttribute("data-processed")) {
+        const cacheKey = node.__plainlyMermaidCacheKey;
+        if (cacheKey) {
+          presentKeys.add(cacheKey);
+          const source = this.getMermaidSourceFromCacheKey(cacheKey);
+          if (source !== null) {
+            occurrences.set(source, (occurrences.get(source) || 0) + 1);
+          }
+        }
+        return;
+      }
+
+      const source = node.textContent.trim();
+      const occurrence = occurrences.get(source) || 0;
+      occurrences.set(source, occurrence + 1);
+      const cacheKey = this.getMermaidCacheKey(source, occurrence);
+      node.__plainlyMermaidCacheKey = cacheKey;
+      presentKeys.add(cacheKey);
+      const cachedSvg = this.mermaidCache.get(cacheKey);
+      if (cachedSvg === undefined) {
+        misses.push(node);
+        return;
+      }
+      node.innerHTML = cachedSvg;
+      node.setAttribute("data-processed", "true");
+    });
+
+    this.mermaidCache.forEach((_svg, cacheKey) => {
+      if (!presentKeys.has(cacheKey)) {
+        this.mermaidCache.delete(cacheKey);
+      }
+    });
+
+    return misses;
   };
 
   handleDrop = (_instance: any, e: any) => {
@@ -695,18 +806,38 @@ class App extends Component<AppProps, AppState> {
     if (!this.mermaid || !this.previewWrap) {
       return;
     }
-    const nodes = (Array.from(this.previewWrap.querySelectorAll(".mermaid")) as HTMLElement[]).filter(
+    const documentKey = this.syncMermaidCacheScope();
+    const nodes = this.restoreMermaidCache().filter(
       (node) => !node.getAttribute("data-processed"),
     );
     if (!nodes.length) {
       return;
     }
-    if (typeof this.mermaid.run === "function") {
-      this.mermaid.run({nodes});
-      return;
-    }
-    if (typeof this.mermaid.init === "function") {
-      this.mermaid.init(undefined, nodes);
+    const cacheRenderedNodes = () => {
+      if (this.mermaidCacheDocumentKey !== documentKey || this.getMermaidDocumentKey() !== documentKey) {
+        return;
+      }
+      nodes.forEach((node) => {
+        const cacheKey = node.__plainlyMermaidCacheKey;
+        if (cacheKey && node.getAttribute("data-processed")) {
+          this.mermaidCache.set(cacheKey, node.innerHTML);
+        }
+      });
+    };
+    try {
+      const result =
+        typeof this.mermaid.run === "function"
+          ? this.mermaid.run({nodes})
+          : typeof this.mermaid.init === "function"
+            ? this.mermaid.init(undefined, nodes)
+            : undefined;
+      if (result && typeof result.then === "function") {
+        Promise.resolve(result).then(cacheRenderedNodes).catch(console.error);
+      } else {
+        cacheRenderedNodes();
+      }
+    } catch (error) {
+      console.error(error);
     }
   };
 

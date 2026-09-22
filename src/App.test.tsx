@@ -21,6 +21,25 @@ jest.mock(
 
 jest.mock("lodash.throttle", () => (fn) => fn);
 
+const mockDebounce = jest.fn((fn) => {
+  let pending = false;
+  const debounced: any = jest.fn(() => {
+    pending = true;
+  });
+  debounced.cancel = jest.fn(() => {
+    pending = false;
+  });
+  debounced.flush = jest.fn(() => {
+    if (pending) {
+      pending = false;
+      return fn();
+    }
+  });
+  return debounced;
+});
+
+jest.mock("lodash.debounce", () => mockDebounce);
+
 jest.mock("antd", () => {
   return {
     Button: ({children, ...props}) => React.createElement("button", {...props, type: "button"}, children),
@@ -149,6 +168,7 @@ jest.mock("./search", () => ({
 }));
 
 import App from "./App";
+import pluginCenter from "./utils/pluginCenter";
 import {resolveThemeHtmlForTemplate} from "./theme";
 import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
 import {getDataStore} from "./data/store/index";
@@ -206,9 +226,34 @@ const props = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  (pluginCenter as any).mermaid = false;
 });
 
 const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+const createMermaidPreview = (sources: string[]) => {
+  const preview = document.createElement("section");
+  const nodes = sources.map((source) => {
+    const node = document.createElement("pre");
+    node.className = "mermaid";
+    node.textContent = source;
+    preview.appendChild(node);
+    return node;
+  });
+  return {preview, nodes};
+};
+
+const setMermaidProps = (instance, content: string, documentUuid = "document-a") => {
+  (instance as any).props = {...props, content: {...props.content, content, documentUuid}};
+};
+
+const createMermaidRun = () =>
+  jest.fn(({nodes}) => {
+    nodes.forEach((node, index) => {
+      node.innerHTML = `<svg data-rendered-index="${index}">${node.textContent}</svg>`;
+      node.setAttribute("data-processed", "true");
+    });
+  });
 
 it("falls back to Rico's live ratio when preview headings have no markers", () => {
   const markdownEditor = {
@@ -382,6 +427,216 @@ it("typesets math after the mathjax loader finishes", async () => {
   await flushPromises();
 
   expect(instance.handleUpdateMathjax).toHaveBeenCalled();
+});
+
+it("schedules Mermaid only for preview changes and renders it on blur", () => {
+  const instance = new App(props);
+  expect(mockDebounce).toHaveBeenCalledWith(instance.updateMermaid, 800, {leading: false, trailing: true});
+  const {preview, nodes: [node]} = createMermaidPreview(["graph TD"]);
+  const run = createMermaidRun();
+  instance.mermaid = {run};
+  instance.previewWrap = preview;
+  (pluginCenter as any).mermaid = true;
+
+  instance.componentDidUpdate();
+  expect(instance.handleUpdateMermaid).not.toHaveBeenCalled();
+
+  (instance as any).props = {...props, content: {...props.content, content: "```mermaid\ngraph TD\n```"}};
+  instance.componentDidUpdate();
+  (instance as any).props = {...props, content: {...props.content, content: "```mermaid\ngraph LR\n```"}};
+  instance.componentDidUpdate();
+  instance.componentDidUpdate();
+
+  expect(instance.handleUpdateMermaid).toHaveBeenCalledTimes(2);
+  expect(run).not.toHaveBeenCalled();
+
+  instance.handleBlur();
+
+  expect((instance.handleUpdateMermaid as any).flush).toHaveBeenCalledTimes(1);
+  expect(run).toHaveBeenCalledWith({nodes: [node]});
+});
+
+it("restores a cached Mermaid SVG immediately after the preview DOM is rebuilt", () => {
+  const instance = new App(props);
+  const run = createMermaidRun();
+  instance.mermaid = {run};
+  (pluginCenter as any).mermaid = true;
+  const source = "graph TD";
+  const first = createMermaidPreview([source]);
+  instance.previewWrap = first.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```");
+
+  instance.componentDidUpdate();
+  instance.handleBlur();
+  expect(instance.mermaidCache.size).toBe(1);
+
+  const rebuilt = createMermaidPreview([source]);
+  instance.previewWrap = rebuilt.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```\nordinary text");
+  instance.componentDidUpdate();
+
+  expect(rebuilt.nodes[0].innerHTML).toBe(first.nodes[0].innerHTML);
+  expect(rebuilt.nodes[0].getAttribute("data-processed")).toBe("true");
+  expect(instance.handleUpdateMermaid).toHaveBeenCalledTimes(1);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("renders only the changed Mermaid node after restoring unchanged nodes", () => {
+  const instance = new App(props);
+  const run = createMermaidRun();
+  instance.mermaid = {run};
+  (pluginCenter as any).mermaid = true;
+  const first = createMermaidPreview(["graph TD", "graph LR"]);
+  instance.previewWrap = first.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```\n```mermaid\ngraph LR\n```");
+
+  instance.componentDidUpdate();
+  instance.handleBlur();
+
+  const rebuilt = createMermaidPreview(["graph TD", "graph BT"]);
+  instance.previewWrap = rebuilt.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```\n```mermaid\ngraph BT\n```");
+  instance.componentDidUpdate();
+
+  expect(rebuilt.nodes[0].getAttribute("data-processed")).toBe("true");
+  expect(rebuilt.nodes[1].getAttribute("data-processed")).toBe(null);
+  instance.handleBlur();
+
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(run.mock.calls[1][0]).toEqual({nodes: [rebuilt.nodes[1]]});
+  expect(instance.mermaidCache.size).toBe(2);
+});
+
+it("does not reuse Mermaid cache entries across document UUIDs", () => {
+  const instance = new App(props);
+  const run = createMermaidRun();
+  instance.mermaid = {run};
+  (pluginCenter as any).mermaid = true;
+  const first = createMermaidPreview(["graph TD"]);
+  instance.previewWrap = first.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```", "document-a");
+
+  instance.componentDidUpdate();
+  instance.handleBlur();
+
+  const nextDocument = createMermaidPreview(["graph TD"]);
+  instance.previewWrap = nextDocument.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```", "document-b");
+  instance.componentDidUpdate();
+
+  expect(nextDocument.nodes[0].getAttribute("data-processed")).toBe(null);
+  expect(instance.handleUpdateMermaid).toHaveBeenCalledTimes(2);
+  instance.handleBlur();
+  expect(run).toHaveBeenCalledTimes(2);
+});
+
+it("keeps same-source Mermaid occurrences in separate cache entries", () => {
+  const instance = new App(props);
+  const run = createMermaidRun();
+  instance.mermaid = {run};
+  (pluginCenter as any).mermaid = true;
+  const first = createMermaidPreview(["graph TD", "graph TD"]);
+  instance.previewWrap = first.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```\n```mermaid\ngraph TD\n```");
+
+  instance.componentDidUpdate();
+  instance.handleBlur();
+  expect(instance.mermaidCache.size).toBe(2);
+
+  const rebuilt = createMermaidPreview(["graph TD", "graph TD"]);
+  instance.previewWrap = rebuilt.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```\n```mermaid\ngraph TD\n```\nordinary text");
+  instance.componentDidUpdate();
+
+  expect(rebuilt.nodes[0].innerHTML).toContain('data-rendered-index="0"');
+  expect(rebuilt.nodes[1].innerHTML).toContain('data-rendered-index="1"');
+  expect(instance.handleUpdateMermaid).toHaveBeenCalledTimes(1);
+});
+
+it("prunes Mermaid cache entries while ordinary text changes rebuild the preview", () => {
+  const instance = new App(props);
+  const run = createMermaidRun();
+  instance.mermaid = {run};
+  (pluginCenter as any).mermaid = true;
+  const first = createMermaidPreview(["graph TD"]);
+  instance.previewWrap = first.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```");
+
+  instance.componentDidUpdate();
+  instance.handleBlur();
+
+  ["first", "second", "third"].forEach((text) => {
+    const rebuilt = createMermaidPreview(["graph TD"]);
+    instance.previewWrap = rebuilt.preview;
+    setMermaidProps(instance, `\`\`\`mermaid\ngraph TD\n\`\`\`\n${text}`);
+    instance.componentDidUpdate();
+    expect(instance.mermaidCache.size).toBe(1);
+    expect(rebuilt.nodes[0].getAttribute("data-processed")).toBe("true");
+  });
+
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
+it("does not cache a stale Mermaid Promise after switching documents", async () => {
+  const instance = new App(props);
+  let resolveRun;
+  const run = jest.fn(({nodes}) => {
+    nodes.forEach((node) => {
+      node.innerHTML = "<svg />";
+      node.setAttribute("data-processed", "true");
+    });
+    return new Promise((resolve) => {
+      resolveRun = resolve;
+    });
+  });
+  instance.mermaid = {run};
+  (pluginCenter as any).mermaid = true;
+  const first = createMermaidPreview(["graph TD"]);
+  instance.previewWrap = first.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```", "document-a");
+
+  instance.componentDidUpdate();
+  instance.handleBlur();
+
+  const nextDocument = createMermaidPreview(["graph TD"]);
+  instance.previewWrap = nextDocument.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```", "document-b");
+  instance.componentDidUpdate();
+  resolveRun();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(instance.mermaidCacheDocumentKey).toBe("document-b");
+  expect(instance.mermaidCache.size).toBe(0);
+});
+
+it("captures Mermaid Promise rejections", async () => {
+  const instance = new App(props);
+  const error = new Error("render failed");
+  const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  instance.mermaid = {run: jest.fn(() => Promise.reject(error))};
+  (pluginCenter as any).mermaid = true;
+  const preview = createMermaidPreview(["graph TD"]);
+  instance.previewWrap = preview.preview;
+  setMermaidProps(instance, "```mermaid\ngraph TD\n```");
+
+  instance.componentDidUpdate();
+  instance.handleBlur();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(consoleError).toHaveBeenCalledWith(error);
+  consoleError.mockRestore();
+});
+
+it("cancels the pending Mermaid render when unmounted", () => {
+  const instance = new App(props);
+  instance.mermaidCache.set("cache-key", "<svg />");
+
+  instance.componentWillUnmount();
+
+  expect((instance.handleUpdateMermaid as any).cancel).toHaveBeenCalledTimes(1);
+  expect(instance.mermaidCache.size).toBe(0);
 });
 
 it("syncs local data after restoring an existing session", async () => {

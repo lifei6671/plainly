@@ -6,6 +6,7 @@ import {
   FileTextOutlined,
   FolderOpenOutlined,
   FolderOutlined,
+  LoadingOutlined,
   PushpinOutlined,
   ReloadOutlined,
 } from "@ant-design/icons";
@@ -31,6 +32,7 @@ type DocumentNavigatorState = {
   expandedKeys: string[];
   loading: boolean;
   loadFailed: boolean;
+  openingDocumentId: string | null;
 };
 
 const categoryKey = (categoryId: string) => `category:${categoryId}`;
@@ -60,6 +62,10 @@ export const getDocumentNavigatorStore = (userId: number) => getDataStore(userId
 export class DocumentNavigator extends Component<DocumentNavigatorProps, DocumentNavigatorState> {
   loadVersion = 0;
 
+  openVersion = 0;
+
+  openingDocumentId: string | null = null;
+
   constructor(props: DocumentNavigatorProps) {
     super(props);
     this.state = {
@@ -68,6 +74,7 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
       expandedKeys: [],
       loading: false,
       loadFailed: false,
+      openingDocumentId: null,
     };
   }
 
@@ -139,8 +146,13 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
   };
 
   openDocument = async (document: DocumentMeta) => {
+    if (this.openingDocumentId === document.document_id) return;
+    const openVersion = ++this.openVersion;
+    this.openingDocumentId = document.document_id;
+    this.setState({openingDocumentId: document.document_id});
     try {
       const content = await getDocumentNavigatorStore(this.props.userId).getDocumentContent(document.document_id);
+      if (openVersion !== this.openVersion) return;
       const category = this.state.categories.find((item) => item.category_id === document.category_id);
       this.props.content.setDocumentUuid(document.document_id);
       this.props.content.setDocumentName(document.name || "未命名.md");
@@ -158,8 +170,14 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
         this.props.onClose();
       }
     } catch (error) {
+      if (openVersion !== this.openVersion) return;
       console.error(error);
       message.error("加载文档失败");
+    } finally {
+      if (openVersion === this.openVersion) {
+        this.openingDocumentId = null;
+        this.setState({openingDocumentId: null});
+      }
     }
   };
 
@@ -193,16 +211,22 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
 
   renderDocumentTitle = (document: DocumentMeta) => {
     const isActive = normalizeDocumentId(document.document_id) === normalizeDocumentId(this.props.content.documentUuid);
+    const isOpening = this.state.openingDocumentId === document.document_id;
     const documentName = document.name || "未命名.md";
     return (
-      <div className={`nice-document-navigator-node nice-document-navigator-document-node${isActive ? " active" : ""}`}>
+      <div
+        className={`nice-document-navigator-node nice-document-navigator-document-node${isOpening ? " opening" : ""}${
+          isActive ? " active" : ""
+        }`}
+      >
         <button
           type="button"
           className="nice-document-navigator-document-open"
           aria-label={`打开 ${documentName}`}
+          aria-busy={isOpening}
           onClick={() => this.openDocument(document)}
         >
-          <FileTextOutlined />
+          {isOpening ? <LoadingOutlined spin /> : <FileTextOutlined />}
           <Tooltip title={documentName} placement="right" mouseEnterDelay={0.3}>
             <span className="nice-document-navigator-node-label">{documentName}</span>
           </Tooltip>
