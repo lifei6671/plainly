@@ -155,7 +155,7 @@ export const redWhiteTheme = {
   name: '红白色系',
   preserveQuoteColors: true,
   styles: {
-    container: `max-width:677px;box-sizing:border-box;margin:0 auto;padding:8px 0 32px;background-color:#FFFFFF !important;color:#374151 !important;font-family:${SANS};line-height:1.75;letter-spacing:0.5px;overflow-wrap:anywhere;`,
+    container: `width:100%;max-width:none;box-sizing:border-box;margin:0 auto;padding:8px 0 32px;background-color:#FFFFFF !important;color:#374151 !important;font-family:${SANS};line-height:1.75;letter-spacing:0.5px;overflow-wrap:anywhere;`,
     h1: `margin:10px 10px 28px;padding:0;font-family:${SANS};font-size:22px;font-weight:900;line-height:1.4;color:#1C1917 !important;letter-spacing:1px;`,
     h2: `margin:48px 0 28px;padding:0 10px;font-family:${SANS};font-size:18px;font-weight:800;line-height:1.4;color:#1C1917 !important;`,
     h3: `margin:28px 0 14px;padding:0 10px 0 13px;border-left:3px solid #DC2626;font-family:${SANS};font-size:15px;font-weight:800;line-height:1.4;color:#1C1917 !important;`,
@@ -199,4 +199,3 @@ export const redWhiteTheme = {
     });
   }
 };
-

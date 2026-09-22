@@ -132,7 +132,7 @@ export const monoBlueEditorialTheme = {
   name: '墨蓝刊读风',
   preserveQuoteColors: true,
   styles: {
-    container: `max-width:677px;box-sizing:border-box;margin:0 auto;padding:16px 0 32px;background-color:#FFFFFF !important;color:${INK} !important;font-family:${SERIF};line-height:1.8;overflow-wrap:anywhere;`,
+    container: `width:100%;max-width:none;box-sizing:border-box;margin:0 auto;padding:16px 0 32px;background-color:#FFFFFF !important;color:${INK} !important;font-family:${SERIF};line-height:1.8;overflow-wrap:anywhere;`,
     h1: `margin:0 0 28px;padding:0 22px;font-family:${SERIF};font-size:24px;font-weight:700;line-height:1.4;color:${INK} !important;`,
     h2: `margin:44px 0 24px;padding:0 22px;font-family:${SERIF};font-size:18px;font-weight:700;line-height:1.4;color:${INK} !important;`,
     h3: `margin:24px 0 20px;padding:0 22px;font-family:${SERIF};font-size:15px;font-weight:700;line-height:1.5;color:${INK} !important;`,
@@ -176,4 +176,3 @@ export const monoBlueEditorialTheme = {
     });
   }
 };
-

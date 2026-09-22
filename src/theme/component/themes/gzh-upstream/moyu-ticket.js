@@ -187,7 +187,7 @@ export const moyuTicketTheme = {
   name: '摸鱼票据风',
   preserveQuoteColors: true,
   styles: {
-    container: `max-width:677px;box-sizing:border-box;margin:0 auto;padding:16px 0 32px;background-color:#FFFFFF !important;color:#555 !important;font-family:${SANS};line-height:1.75;letter-spacing:0.5px;overflow-wrap:anywhere;`,
+    container: `width:100%;max-width:none;box-sizing:border-box;margin:0 auto;padding:16px 0 32px;background-color:#FFFFFF !important;color:#555 !important;font-family:${SANS};line-height:1.75;letter-spacing:0.5px;overflow-wrap:anywhere;`,
     h1: `margin:0 0 28px;padding:0 20px;font-family:${SANS};font-size:24px;font-weight:900;line-height:1.3;color:${INK} !important;`,
     h2: `margin:0 0 32px;padding:0 20px;font-family:${SANS};font-size:18px;font-weight:800;line-height:1.4;color:${INK} !important;`,
     h3: `margin:16px 0 16px;padding:0 20px;font-family:${SANS};font-size:15px;font-weight:700;line-height:1.5;color:${INK} !important;`,
@@ -230,4 +230,3 @@ export const moyuTicketTheme = {
     });
   }
 };
-

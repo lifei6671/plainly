@@ -158,7 +158,7 @@ export const oliveJournalTheme = {
   name: '橄榄手记',
   preserveQuoteColors: true,
   styles: {
-    container: `max-width:677px;box-sizing:border-box;margin:0 auto;padding:8px;background-color:${CREAM} !important;color:${BODY} !important;font-family:${FONT};line-height:1.75;overflow-wrap:anywhere;`,
+    container: `width:100%;max-width:none;box-sizing:border-box;margin:0 auto;padding:8px;background-color:${CREAM} !important;color:${BODY} !important;font-family:${FONT};line-height:1.75;overflow-wrap:anywhere;`,
     h1: `margin:0 0 24px;padding:0 2px;font-family:${FONT};font-size:24px;font-weight:800;line-height:1.15;color:${TITLE} !important;letter-spacing:-0.75px;`,
     h2: `margin:24px 0 24px;padding:0;font-family:${FONT};font-size:17px;font-weight:800;line-height:1.5;color:${TITLE} !important;`,
     h3: `margin:24px 0 14px;padding:0 2px;width:fit-content;box-shadow:inset 0 -0.5em 0 rgba(245,78,0,0.18);font-family:${FONT};font-size:18px;font-weight:700;line-height:1.5;color:${TITLE} !important;`,
@@ -202,4 +202,3 @@ export const oliveJournalTheme = {
     });
   }
 };
-
