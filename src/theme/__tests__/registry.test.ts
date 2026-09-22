@@ -1,3 +1,4 @@
+/* eslint-disable import/first */
 jest.mock("../../template", () => ({
   __esModule: true,
   default: {style: new Proxy({}, {get: () => "/* legacy CSS */"})},
@@ -53,7 +54,14 @@ describe("ThemeRegistry", () => {
 
   it("exposes complete metadata", () => {
     const theme = themeRegistry.getTheme("rico-minimalism");
-    expect(theme).toMatchObject({name: "简约沉浸", category: "简约主义", author: "Rico MD", source: "ricocc/rico-md", license: "MIT", mode: "element-map"});
+    expect(theme).toMatchObject({
+      name: "简约沉浸",
+      category: "简约主义",
+      author: "Rico (ricoui.com)",
+      source: "ricocc/rico-md@8c22fe5711365ffe646a0987b6d670d22511de58: assets/styles/themes/minimalism.js",
+      license: "MIT",
+      mode: "element-map",
+    });
   });
 
   it.each(["nightPurple", "extremeBlack"])("preserves the legacy new badge for %s", (id) => {
