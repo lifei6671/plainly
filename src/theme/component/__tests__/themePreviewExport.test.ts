@@ -155,23 +155,23 @@ describe("component theme production preview and WeChat export", () => {
     const parsed = toRoot(rawHtml);
 
     expect(rawHtml).toContain('<pre class="custom"><code class="hljs">');
-    expect(preview.querySelectorAll(".plainly-graphite-minimal-title")).toHaveLength(1);
-    expect(preview.querySelector(".plainly-graphite-minimal-section-number")?.textContent).toBe("01");
-    expect(preview.querySelector(".plainly-graphite-minimal-section-title strong")?.textContent).toBe("渲染");
-    expect(preview.querySelector(".plainly-graphite-minimal-section-title em")?.textContent).toBe("边界");
-    expect(preview.querySelector(".plainly-graphite-minimal-section-title a")?.getAttribute("href")).toBe(
+    expect(preview.querySelector("h1")?.textContent).toBe("从渲染管线理解主题迁移");
+    expect(preview.querySelector(".plainly-graphite-minimal-chapter-number")?.textContent).toBe("∞");
+    expect(preview.querySelector(".plainly-graphite-minimal-chapter h2 strong")?.textContent).toBe("渲染");
+    expect(preview.querySelector(".plainly-graphite-minimal-chapter h2 em")?.textContent).toBe("边界");
+    expect(preview.querySelector(".plainly-graphite-minimal-chapter h2 a")?.getAttribute("href")).toBe(
       "https://example.com/render-contract",
     );
-    expect(preview.querySelector(".plainly-graphite-minimal-list ul ul li strong")?.textContent).toBe("强调");
-    expect(preview.querySelectorAll(".plainly-graphite-minimal-list .plainly-graphite-minimal-list")).toHaveLength(0);
+    expect(preview.querySelector(".plainly-graphite-minimal-unordered-row > ul li strong")?.textContent).toBe("强调");
+    expect(preview.querySelectorAll(".plainly-graphite-minimal-unordered-row .plainly-graphite-minimal-unordered-row")).toHaveLength(0);
     expect(preview.querySelector("pre.custom")?.outerHTML).toBe(parsed.querySelector("pre.custom")?.outerHTML);
     expect(preview.querySelector(".mermaid")?.outerHTML).toBe(parsed.querySelector(".mermaid")?.outerHTML);
 
     const exportedHtml = exportHtml();
     const exported = toRoot(exportedHtml);
 
-    expect(exported.querySelector(".plainly-graphite-minimal-section-number")?.getAttribute("style")).toContain("color");
-    expect(exported.querySelector(".plainly-graphite-minimal-list ul ul")).not.toBeNull();
+    expect(exported.querySelector(".plainly-graphite-minimal-chapter-number")?.getAttribute("style")).toContain("color");
+    expect(exported.querySelector(".plainly-graphite-minimal-unordered-row > ul")).not.toBeNull();
     expect(exported.querySelector("pre.custom > code.hljs")).not.toBeNull();
     expect(exported.querySelector("pre.custom > code.hljs")?.getAttribute("style")).toContain("background: #f8f8f8");
     expect(exported.querySelector(".mermaid")?.textContent).toContain("Markdown --> Preview");
@@ -187,9 +187,9 @@ describe("component theme production preview and WeChat export", () => {
     const parsed = toRoot(rawHtml);
 
     expect(rawHtml).toContain('class="code-snippet__fix code-snippet__js"');
-    expect(preview.querySelectorAll(".plainly-graphite-minimal-title")).toHaveLength(1);
-    expect(preview.querySelector(".plainly-graphite-minimal-section-number")?.textContent).toBe("01");
-    expect(preview.querySelector(".plainly-graphite-minimal-list ul ul")).not.toBeNull();
+    expect(preview.querySelector("h1")?.textContent).toBe("从渲染管线理解主题迁移");
+    expect(preview.querySelector(".plainly-graphite-minimal-chapter-number")?.textContent).toBe("∞");
+    expect(preview.querySelector(".plainly-graphite-minimal-unordered-row > ul")).not.toBeNull();
     expect(preview.querySelector(".code-snippet__fix")?.outerHTML).toBe(parsed.querySelector(".code-snippet__fix")?.outerHTML);
     expect(preview.querySelector(".code-snippet__fix")?.closest(".plainly-graphite-minimal-list")).toBeNull();
     expect(preview.querySelector(".mermaid")?.outerHTML).toBe(parsed.querySelector(".mermaid")?.outerHTML);
@@ -197,8 +197,8 @@ describe("component theme production preview and WeChat export", () => {
     const exportedHtml = exportHtml();
     const exported = toRoot(exportedHtml);
 
-    expect(exported.querySelector(".plainly-graphite-minimal-section-number")?.getAttribute("style")).toContain("color");
-    expect(exported.querySelector(".plainly-graphite-minimal-list ul ul")).not.toBeNull();
+    expect(exported.querySelector(".plainly-graphite-minimal-chapter-number")?.getAttribute("style")).toContain("color");
+    expect(exported.querySelector(".plainly-graphite-minimal-unordered-row > ul")).not.toBeNull();
     expect(exported.querySelector(".code-snippet__fix")).not.toBeNull();
     expect(exported.querySelector(".code-snippet__fix")?.closest(".plainly-graphite-minimal-list")).toBeNull();
     expect(exported.querySelector(".mermaid")?.textContent).toContain("Markdown --> Preview");
