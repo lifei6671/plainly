@@ -1,5 +1,6 @@
 import type {ThemeTransform} from "../types";
 import type {ComponentBlockTag, ComponentRendererMap} from "./types";
+import {SCROLL_SOURCE_LINE_ATTR} from "../../utils/syncScroll";
 
 const componentBlockTags = new Set<ComponentBlockTag>([
   "h1",
@@ -51,6 +52,17 @@ export const createComponentThemeTransform = (renderers: ComponentRendererMap): 
       heading2Index,
     });
     if (replacement) {
+      const sourceMarker = sourceElement.getAttribute(SCROLL_SOURCE_LINE_ATTR);
+      const replacementHasMarker =
+        replacement.nodeType === 1
+          ? (replacement as Element).hasAttribute(SCROLL_SOURCE_LINE_ATTR) || Boolean((replacement as Element).querySelector(`[${SCROLL_SOURCE_LINE_ATTR}]`))
+          : Boolean((replacement as DocumentFragment).querySelector?.(`[${SCROLL_SOURCE_LINE_ATTR}]`));
+      const markerTarget = replacement.nodeType === 1
+        ? replacement as Element
+        : (replacement as DocumentFragment).firstElementChild;
+      if (sourceMarker !== null && !replacementHasMarker && markerTarget) {
+        markerTarget.setAttribute(SCROLL_SOURCE_LINE_ATTR, sourceMarker);
+      }
       sourceElement.replaceWith(replacement);
     }
   });

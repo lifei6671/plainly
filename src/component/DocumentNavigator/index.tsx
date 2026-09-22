@@ -1,5 +1,5 @@
 import React, {Component} from "react";
-import {Button, Drawer, Empty, Modal, Spin, Tree, message} from "antd";
+import {Button, Drawer, Empty, Modal, Spin, Tooltip, Tree, message} from "antd";
 import {
   CloseOutlined,
   DeleteOutlined,
@@ -36,6 +36,24 @@ type DocumentNavigatorState = {
 const categoryKey = (categoryId: string) => `category:${categoryId}`;
 const documentKey = (documentId: string) => `document:${documentId}`;
 const normalizeDocumentId = (documentId: string) => String(documentId || "").replace(/-/g, "");
+const getCollapsedHeight = () => ({height: 0, opacity: 0});
+const getRealHeight = (node: HTMLElement) => ({height: node.scrollHeight, opacity: 1});
+const getCurrentHeight = (node: HTMLElement) => ({height: node.offsetHeight});
+const endOnHeightTransition = (_: HTMLElement, event: TransitionEvent & {deadline?: boolean}) =>
+  event.deadline === true || event.propertyName === "height";
+const treeMotion = {
+  motionName: "nice-document-navigator-tree-motion",
+  onAppearStart: getCollapsedHeight,
+  onEnterStart: getCollapsedHeight,
+  onAppearActive: getRealHeight,
+  onEnterActive: getRealHeight,
+  onLeaveStart: getCurrentHeight,
+  onLeaveActive: getCollapsedHeight,
+  onAppearEnd: endOnHeightTransition,
+  onEnterEnd: endOnHeightTransition,
+  onLeaveEnd: endOnHeightTransition,
+  motionDeadline: 220,
+};
 
 export const getDocumentNavigatorStore = (userId: number) => getDataStore(userId);
 
@@ -98,6 +116,15 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
 
   handleExpand = (expandedKeys: string[]) => {
     this.setState({expandedKeys});
+  };
+
+  toggleCategory = (categoryId: string) => {
+    const key = categoryKey(categoryId);
+    this.setState((previousState) => ({
+      expandedKeys: previousState.expandedKeys.includes(key)
+        ? previousState.expandedKeys.filter((expandedKey) => expandedKey !== key)
+        : [...previousState.expandedKeys, key],
+    }));
   };
 
   handleClose = () => {
@@ -166,21 +193,24 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
 
   renderDocumentTitle = (document: DocumentMeta) => {
     const isActive = normalizeDocumentId(document.document_id) === normalizeDocumentId(this.props.content.documentUuid);
+    const documentName = document.name || "未命名.md";
     return (
       <div className={`nice-document-navigator-node nice-document-navigator-document-node${isActive ? " active" : ""}`}>
         <button
           type="button"
           className="nice-document-navigator-document-open"
-          aria-label={`打开 ${document.name || "未命名.md"}`}
+          aria-label={`打开 ${documentName}`}
           onClick={() => this.openDocument(document)}
         >
           <FileTextOutlined />
-          <span className="nice-document-navigator-node-label">{document.name || "未命名.md"}</span>
+          <Tooltip title={documentName} placement="right" mouseEnterDelay={0.3}>
+            <span className="nice-document-navigator-node-label">{documentName}</span>
+          </Tooltip>
         </button>
         <button
           type="button"
           className="nice-document-navigator-delete"
-          aria-label={`删除 ${document.name || "未命名.md"}`}
+          aria-label={`删除 ${documentName}`}
           onClick={(event) => {
             event.stopPropagation();
             this.deleteDocument(document);
@@ -199,7 +229,19 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
       return {
         key: categoryKey(categoryId),
         title: (
-          <div className="nice-document-navigator-node">
+          <div
+            className="nice-document-navigator-node nice-document-navigator-category-node"
+            role="button"
+            tabIndex={0}
+            aria-expanded={isExpanded}
+            onClick={() => this.toggleCategory(categoryId)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                this.toggleCategory(categoryId);
+              }
+            }}
+          >
             {isExpanded ? <FolderOpenOutlined /> : <FolderOutlined />}
             <span className="nice-document-navigator-node-label">
               {item.category ? item.category.name : "未分类"}
@@ -228,8 +270,10 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
         className="nice-document-navigator-tree"
         showLine={false}
         selectable={false}
+        blockNode
         expandedKeys={this.state.expandedKeys}
         onExpand={this.handleExpand}
+        motion={treeMotion}
         treeData={treeData}
       />
     );
@@ -244,19 +288,39 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
             <span className="nice-document-navigator-source">{this.props.isRemoteMode && this.props.userId > 0 ? "云端文档" : "本地文档"}</span>
           </div>
           <div className="nice-document-navigator-actions">
-            <Button type="text" size="small" icon={<ReloadOutlined />} onClick={this.loadDocuments} aria-label="刷新文档" />
+            <Button
+              type="text"
+              size="small"
+              icon={<ReloadOutlined />}
+              className="nice-document-navigator-action"
+              onClick={this.loadDocuments}
+              aria-label="刷新文档"
+              title="刷新文档"
+            />
             <Button
               type="text"
               size="small"
               icon={<PushpinOutlined />}
-              className={this.props.pinned ? "nice-document-navigator-pin-active" : ""}
+              className={`nice-document-navigator-action${this.props.pinned ? " nice-document-navigator-pin-active" : ""}`}
               onClick={this.handlePinnedChange}
               aria-label={this.props.pinned ? "取消固定文档导航" : "固定文档导航"}
+              title={this.props.pinned ? "取消固定文档导航" : "固定文档导航"}
             />
-            <Button type="text" size="small" icon={<CloseOutlined />} onClick={this.handleClose} aria-label="关闭文档导航" />
+            <Button
+              type="text"
+              size="small"
+              icon={<CloseOutlined />}
+              className="nice-document-navigator-action"
+              onClick={this.handleClose}
+              aria-label="关闭文档导航"
+              title="关闭文档导航"
+            />
           </div>
         </header>
-        <div className="nice-document-navigator-tree-wrap">{this.renderTree()}</div>
+        <div className="nice-document-navigator-tree-wrap">
+          <div className="nice-document-navigator-section-label">目录</div>
+          {this.renderTree()}
+        </div>
       </div>
     );
   }
@@ -272,6 +336,7 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
         visible={this.props.open}
         mask
         closable={false}
+        className="nice-document-navigator-drawer"
         bodyStyle={{padding: 0}}
         onClose={this.handleClose}
       >

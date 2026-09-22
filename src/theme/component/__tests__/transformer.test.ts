@@ -70,6 +70,20 @@ describe("component theme transformer", () => {
     );
   });
 
+  it("moves a heading source-line marker to an element replacement", () => {
+    const transform = createComponentThemeTransform({
+      h2: (_source, context) => context.document.createElement("section"),
+    });
+
+    expect(transform('<h2 data-scroll-source-line="12">Heading</h2>')).toBe('<section data-scroll-source-line="12"></section>');
+  });
+
+  it("does not duplicate a marker preserved by a cloned heading", () => {
+    const transform = createComponentThemeTransform({h2: (source) => source.cloneNode(true) as Element});
+
+    expect(transform('<h2 data-scroll-source-line="12">Heading</h2>')).toBe('<h2 data-scroll-source-line="12">Heading</h2>');
+  });
+
   it("leaves unregistered and special blocks intact", () => {
     const transform = createComponentThemeTransform({
       h1: (source, context) => {

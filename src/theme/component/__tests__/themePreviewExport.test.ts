@@ -72,7 +72,7 @@ describe("component theme production preview and WeChat export", () => {
     );
     const parsed = toRoot(rawHtml);
 
-    expect(rawHtml).toContain('<h1><span class="prefix"></span><span class="content">从渲染管线理解主题迁移</span>');
+    expect(rawHtml).toContain('<h1 data-scroll-source-line="0"><span class="prefix"></span><span class="content">从渲染管线理解主题迁移</span>');
     expect(rawHtml).toContain('<div class="mermaid">');
     expect(rawHtml).toContain('<pre class="custom"><code class="hljs">');
     expect(rawHtml).toContain("$O(n \\log n)$");
@@ -108,6 +108,8 @@ describe("component theme production preview and WeChat export", () => {
     expect(exported.querySelector("pre.custom > code.hljs")?.getAttribute("style")).toContain("background: #f8f8f8");
     expect(exported.querySelector(".mermaid")?.textContent).toContain("Markdown --> Preview");
     expect(exportedHtml).not.toMatch(/var\(|display\s*:\s*grid|position\s*:\s*(absolute|fixed|sticky)|float\s*:/i);
+    expect(exportedHtml).not.toContain("data-scroll-source-line");
+    expect(preview.querySelector("[data-scroll-source-line]")).not.toBeNull();
   });
 
   it("keeps WeChat parser code blocks and component structure through export", () => {

@@ -63,6 +63,12 @@ describe("技术深读 component theme", () => {
     expect(root.querySelector(".plainly-tech-depth-subsection-title")?.textContent).toBe("Detail");
   });
 
+  it("carries a source-line marker onto replaced chapter sections", () => {
+    const root = toRoot(transform('<h2 data-scroll-source-line="42">Chapter</h2>'));
+
+    expect(root.querySelector('.plainly-tech-depth-section[data-scroll-source-line="42"]')).not.toBeNull();
+  });
+
   it("moves quote and list DOM intact and makes a text-free divider", () => {
     const root = toRoot(
       transform(

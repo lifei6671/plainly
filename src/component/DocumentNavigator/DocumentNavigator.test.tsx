@@ -11,11 +11,12 @@ const confirm = jest.fn();
 const getDataStore = jest.fn();
 
 jest.mock("antd", () => ({
-  Button: ({children}: any) => React.createElement("button", null, children),
-  Drawer: ({children}: any) => React.createElement("div", null, children),
+  Button: ({children, icon, ...props}: any) => React.createElement("button", props, icon, children),
+  Drawer: ({children, ...props}: any) => React.createElement("div", props, children),
   Empty: () => null,
   Modal: {confirm},
   Spin: () => null,
+  Tooltip: ({children, ...props}: any) => React.createElement("tooltip", props, children),
   Tree: () => null,
   message,
 }));
@@ -122,6 +123,56 @@ it("keeps empty directories visible in the tree", () => {
 
   expect(tree.props.treeData).toHaveLength(1);
   expect(tree.props.treeData[0].children).toEqual([]);
+});
+
+it("toggles categories from their titles while preserving the Tree expand handler", () => {
+  const component = new DocumentNavigator(createProps() as any);
+  attachState(component);
+  (component as any).state.categories = [category];
+  (component as any).state.expandedKeys = ["category:category-1"];
+
+  const tree = component.renderTree();
+  const categoryTitle = tree.props.treeData[0].title;
+  categoryTitle.props.onClick();
+  expect(component.state.expandedKeys).toEqual([]);
+
+  categoryTitle.props.onClick();
+  expect(component.state.expandedKeys).toEqual(["category:category-1"]);
+  expect(tree.props.onExpand).toBe(component.handleExpand);
+});
+
+it("renders the document section and visual hooks for active document rows", () => {
+  const component = new DocumentNavigator(createProps({content: {...createProps().content, documentUuid: "document-1"}}) as any);
+  attachState(component);
+  (component as any).state.categories = [category];
+
+  const navigator = component.renderNavigator();
+  const treeWrap = navigator.props.children[1];
+  const tree = component.renderTree();
+  const documentTitle = component.renderDocumentTitle(document as any);
+
+  expect(treeWrap.props.children[0].props.className).toBe("nice-document-navigator-section-label");
+  expect(treeWrap.props.children[0].props.children).toBe("目录");
+  expect(tree.props.blockNode).toBe(true);
+  expect(tree.props.treeData[0].title.props.className).toContain("nice-document-navigator-category-node");
+  expect(documentTitle.props.className).toContain("active");
+  expect(tree.props.motion.motionName).toBe("nice-document-navigator-tree-motion");
+});
+
+it("shows a right-placed tooltip containing the complete document title", () => {
+  const component = new DocumentNavigator(createProps() as any);
+  const documentTitle = component.renderDocumentTitle(document as any);
+  const openButton = documentTitle.props.children[0];
+  const tooltip = openButton.props.children[1];
+
+  expect(tooltip.props.placement).toBe("right");
+  expect(tooltip.props.title).toBe("示例文档");
+});
+
+it("adds a scoped class to the navigator drawer", () => {
+  const component = new DocumentNavigator(createProps() as any);
+
+  expect(component.render().props.className).toBe("nice-document-navigator-drawer");
 });
 
 it("opens the same document on every title-button click", async () => {

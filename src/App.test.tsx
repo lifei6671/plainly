@@ -94,8 +94,8 @@ jest.mock(
 
 jest.mock("./utils/helper", () => ({
   countVisibleChars: () => 0,
-  markdownParser: {render: () => ""},
-  markdownParserWechat: {render: () => ""},
+  markdownParser: {render: () => "", parse: () => []},
+  markdownParserWechat: {render: () => "", parse: () => []},
   updateMathjax: jest.fn(),
 }));
 
@@ -209,6 +209,113 @@ beforeEach(() => {
 });
 
 const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+it("falls back to Rico's live ratio when preview headings have no markers", () => {
+  const markdownEditor = {
+    getScrollInfo: jest.fn(() => ({top: 450, height: 1000, clientHeight: 100})),
+    scrollTo: jest.fn(),
+  };
+  const instance = new App({...props, content: {...props.content, markdownEditor}});
+  instance.previewContainer = {scrollTop: 0, scrollHeight: 2000, clientHeight: 100} as HTMLDivElement;
+
+  instance.handleEditorScroll();
+  expect(instance.previewContainer.scrollTop).toBe(950);
+
+  Object.defineProperty(instance.previewContainer, "scrollHeight", {configurable: true, value: 5000});
+  instance.handleEditorScroll();
+  expect(instance.previewContainer.scrollTop).toBe(2450);
+});
+
+it("uses live heading anchors when the preview has semantic positions", () => {
+  const markdownEditor = {
+    getScrollInfo: jest.fn(() => ({top: 2900, height: 4000, clientHeight: 100})),
+    heightAtLine: jest.fn((line) => ({100: 100, 1500: 1500, 2900: 2900, 3000: 3000, 3100: 3100}[line] || 0)),
+    lineCount: jest.fn(() => 3200),
+    scrollTo: jest.fn(),
+  };
+  const instance = new App({...props, content: {...props.content, markdownEditor}});
+  const preview = {scrollTop: 0, scrollHeight: 50000, clientHeight: 100} as HTMLDivElement;
+  const previewRoot = document.createElement("section");
+  const headingPositions = [
+    [100, 700],
+    [1500, 12000],
+    [2900, 35000],
+    [3000, 36500],
+    [3100, 38000],
+  ];
+  preview.getBoundingClientRect = () => ({top: 0, height: 100} as DOMRect);
+  headingPositions.forEach(([line, top]) => {
+    const heading = document.createElement("h2");
+    heading.setAttribute("data-scroll-source-line", String(line));
+    heading.getBoundingClientRect = () => ({top: top - preview.scrollTop, height: 30} as DOMRect);
+    previewRoot.appendChild(heading);
+  });
+  instance.previewContainer = preview;
+  instance.previewWrap = previewRoot;
+
+  instance.handleEditorScroll();
+  expect(preview.scrollTop).toBe(35000);
+
+  instance.syncScrollLock = null;
+  preview.scrollTop = 38000;
+  instance.handlePreviewScroll();
+  expect(markdownEditor.scrollTo).toHaveBeenCalledWith(null, 3100);
+});
+
+it("synchronizes preview scroll to CodeMirror using the editor's current range", () => {
+  const markdownEditor = {
+    getScrollInfo: jest.fn(() => ({top: 0, height: 1000, clientHeight: 100})),
+    scrollTo: jest.fn(),
+  };
+  const instance = new App({...props, content: {...props.content, markdownEditor}});
+  instance.previewContainer = {scrollTop: 1000, scrollHeight: 2100, clientHeight: 100} as HTMLDivElement;
+
+  instance.handlePreviewScroll();
+
+  expect(markdownEditor.scrollTo).toHaveBeenCalledWith(null, 450);
+});
+
+it("prevents a programmatic scroll event from feeding back and releases on the next frame", () => {
+  const markdownEditor = {
+    getScrollInfo: jest.fn(() => ({top: 450, height: 1000, clientHeight: 100})),
+    scrollTo: jest.fn(),
+  };
+  const windowAny = window as any;
+  const originalRequestAnimationFrame = windowAny.requestAnimationFrame;
+  const frames: FrameRequestCallback[] = [];
+  windowAny.requestAnimationFrame = jest.fn((callback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  const instance = new App({...props, content: {...props.content, markdownEditor}});
+  instance.previewContainer = {scrollTop: 0, scrollHeight: 2100, clientHeight: 100} as HTMLDivElement;
+
+  instance.handleEditorScroll();
+  instance.handlePreviewScroll();
+  expect(markdownEditor.scrollTo).not.toHaveBeenCalled();
+
+  frames.shift()(0);
+  instance.previewContainer.scrollTop = 1000;
+  instance.handlePreviewScroll();
+  expect(markdownEditor.scrollTo).toHaveBeenCalledWith(null, 450);
+
+  windowAny.requestAnimationFrame = originalRequestAnimationFrame;
+});
+
+it("does not synchronize when sync scrolling is disabled", () => {
+  const markdownEditor = {
+    getScrollInfo: jest.fn(() => ({top: 450, height: 1000, clientHeight: 100})),
+    scrollTo: jest.fn(),
+  };
+  const instance = new App({...props, navbar: {...props.navbar, isSyncScroll: false}, content: {...props.content, markdownEditor}});
+  instance.previewContainer = {scrollTop: 10, scrollHeight: 2100, clientHeight: 100} as HTMLDivElement;
+
+  instance.handleEditorScroll();
+  instance.handlePreviewScroll();
+
+  expect(instance.previewContainer.scrollTop).toBe(10);
+  expect(markdownEditor.scrollTo).not.toHaveBeenCalled();
+});
 
 it("renders without crashing with injected props", () => {
   const instance = new App(props);

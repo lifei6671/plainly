@@ -1,4 +1,5 @@
 import juice from "juice";
+import {stripHeadingAnchorAttributes} from "./syncScroll";
 import {message} from "antd";
 import {
   BASIC_THEME_ID,
@@ -220,6 +221,7 @@ export const solveHtml = () => {
     item.setAttribute("data-tool", "mdnice编辑器");
   }
   let html = element.innerHTML;
+  html = stripHeadingAnchorAttributes(html);
   html = html.replace(/<mjx-container (class="inline.+?)<\/mjx-container>/g, "<span $1</span>");
   html = html.replace(/\s<span class="inline/g, '&nbsp;<span class="inline');
   html = html.replace(/svg><\/span>\s/g, "svg></span>&nbsp;");

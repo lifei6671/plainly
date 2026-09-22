@@ -46,6 +46,13 @@ import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
 import {getDataStore} from "./data/store/index";
 import {markIndexDirty, scheduleIndexRebuild} from "./search";
 import {resolveThemeHtmlForTemplate} from "./theme";
+import {
+  buildLiveHeadingAnchors,
+  mapEditorToPreviewByAnchors,
+  mapPreviewToEditorByAnchors,
+  mapScrollByRatio,
+  renderMarkdownWithHeadingAnchors,
+} from "./utils/syncScroll";
 
 const SESSION_FLAG_COOKIE = "plainly_session";
 const DATA_STORE_USER_ID_KEY = "__DATA_STORE_USER_ID__";
@@ -85,11 +92,9 @@ type AppState = {
 class App extends Component<AppProps, AppState> {
   focus = false;
 
-  scale = 1;
+  syncScrollLock: "editor" | "preview" | null = null;
 
-  editorTop = 0;
-
-  index = 0;
+  syncScrollReleaseFrame: number | null = null;
 
   previewContainer: HTMLDivElement | null = null;
 
@@ -184,6 +189,7 @@ class App extends Component<AppProps, AppState> {
     document.removeEventListener("webkitfullscreenchange", this.solveScreenChange);
     document.removeEventListener("mozfullscreenchange", this.solveScreenChange);
     document.removeEventListener("MSFullscreenChange", this.solveScreenChange);
+    if (this.syncScrollReleaseFrame !== null) this.cancelFrame(this.syncScrollReleaseFrame);
   }
 
   setRuntimeUser = (user) => {
@@ -204,10 +210,6 @@ class App extends Component<AppProps, AppState> {
     const windowAny = window as any;
     return windowAny[DATA_STORE_USER_ID_KEY] || windowAny[CURRENT_USER_ID_KEY] || 0;
   };
-
-  setCurrentIndex(index: number, _event?: unknown) {
-    this.index = index;
-  }
 
   hasSessionCookie = () => {
     if (typeof document === "undefined") return false;
@@ -590,20 +592,67 @@ class App extends Component<AppProps, AppState> {
     }
   };
 
-  handleScroll = () => {
-    if (this.props.navbar.isSyncScroll) {
-      const {markdownEditor} = this.props.content;
-      const cmData = markdownEditor.getScrollInfo();
-      const editorToTop = cmData.top;
-      const editorScrollHeight = cmData.height - cmData.clientHeight;
-      this.scale = (this.previewWrap.offsetHeight - this.previewContainer.offsetHeight + 55) / editorScrollHeight;
-      if (this.index === 1) {
-        this.previewContainer.scrollTop = editorToTop * this.scale;
-      } else {
-        this.editorTop = this.previewContainer.scrollTop / this.scale;
-        markdownEditor.scrollTo(null, this.editorTop);
-      }
+  requestFrame = (callback: FrameRequestCallback): number => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      return window.requestAnimationFrame(callback);
     }
+    return setTimeout(() => callback(Date.now()), 0) as unknown as number;
+  };
+
+  cancelFrame = (frame: number) => {
+    if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(frame);
+    } else {
+      clearTimeout(frame as unknown as ReturnType<typeof setTimeout>);
+    }
+  };
+
+  releaseScrollSyncLock = (source: "editor" | "preview") => {
+    if (this.syncScrollReleaseFrame !== null) this.cancelFrame(this.syncScrollReleaseFrame);
+    this.syncScrollReleaseFrame = this.requestFrame(() => {
+      this.syncScrollReleaseFrame = null;
+      if (this.syncScrollLock === source) this.syncScrollLock = null;
+    });
+  };
+
+  handleEditorScroll = () => {
+    if (!this.props.navbar.isSyncScroll || this.syncScrollLock === "preview") return;
+    const {markdownEditor} = this.props.content;
+    if (!markdownEditor || !this.previewContainer) return;
+    const scrollInfo = markdownEditor.getScrollInfo();
+    const anchors = this.previewWrap
+      ? buildLiveHeadingAnchors({markdownEditor, previewContainer: this.previewContainer, previewRoot: this.previewWrap})
+      : null;
+    const targetPreviewTop = mapEditorToPreviewByAnchors(anchors, scrollInfo.top) ?? mapScrollByRatio(
+      scrollInfo.top,
+      scrollInfo.height,
+      scrollInfo.clientHeight,
+      this.previewContainer.scrollHeight,
+      this.previewContainer.clientHeight,
+    );
+    this.syncScrollLock = "editor";
+    this.previewContainer.scrollTop = targetPreviewTop;
+    this.releaseScrollSyncLock("editor");
+  };
+
+  handlePreviewScroll = () => {
+    if (!this.props.navbar.isSyncScroll || this.syncScrollLock === "editor") return;
+    const {markdownEditor} = this.props.content;
+    if (!markdownEditor || !this.previewContainer) return;
+    const scrollInfo = markdownEditor.getScrollInfo();
+    const anchors = this.previewWrap
+      ? buildLiveHeadingAnchors({markdownEditor, previewContainer: this.previewContainer, previewRoot: this.previewWrap})
+      : null;
+    const targetEditorTop = mapPreviewToEditorByAnchors(anchors, this.previewContainer.scrollTop) ?? mapScrollByRatio(
+      this.previewContainer.scrollTop,
+      this.previewContainer.scrollHeight,
+      this.previewContainer.clientHeight,
+      scrollInfo.height,
+      scrollInfo.clientHeight,
+    );
+    this.syncScrollLock = "preview";
+    markdownEditor.scrollTo(null, targetEditorTop);
+    this.releaseScrollSyncLock("preview");
   };
 
   handleChange = (editor: any) => {
@@ -681,7 +730,8 @@ class App extends Component<AppProps, AppState> {
     const markdownLength = countVisibleChars(content || "");
     const lastSavedText = documentUpdatedAt ? new Date(documentUpdatedAt).toLocaleString() : "未保存";
 
-    const rawHtml = codeNum === 0 ? markdownParserWechat.render(content) : markdownParser.render(content);
+    const activeParser = codeNum === 0 ? markdownParserWechat : markdownParser;
+    const rawHtml = renderMarkdownWithHeadingAnchors(content, activeParser);
     const parseHtml = resolveThemeHtmlForTemplate(templateNum, rawHtml);
 
     const mdEditingClass = classnames({
@@ -744,7 +794,7 @@ class App extends Component<AppProps, AppState> {
             <div className={appClass}>
               <Navbar title={defaultTitle} />
               <div className={textContainerClass}>
-                <div id="nice-md-editor" className={mdEditingClass} onMouseOver={(e) => this.setCurrentIndex(1, e)}>
+                <div id="nice-md-editor" className={mdEditingClass}>
                   {isSearchOpen && <SearchBox />}
                   <CodeMirror
                     value={this.props.content.content}
@@ -761,7 +811,7 @@ class App extends Component<AppProps, AppState> {
                       },
                     }}
                     onChange={this.handleChange}
-                    onScroll={this.handleScroll}
+                    onScroll={this.handleEditorScroll}
                     onFocus={this.handleFocus}
                     onBlur={this.handleBlur}
                     onDrop={this.handleDrop}
@@ -769,12 +819,12 @@ class App extends Component<AppProps, AppState> {
                     ref={this.getInstance}
                   />
                 </div>
-                <div id="nice-rich-text" className={richTextClass} onMouseOver={(e) => this.setCurrentIndex(2, e)}>
+                <div id="nice-rich-text" className={richTextClass}>
                   <Sidebar />
                   <div
                     id={BOX_ID}
                     className={richTextBoxClass}
-                    onScroll={this.handleScroll}
+                    onScroll={this.handlePreviewScroll}
                     ref={(node) => {
                       this.previewContainer = node;
                     }}

@@ -110,6 +110,17 @@ describe("remaining Rico MD theme fidelity contract", () => {
     expect(inlined.querySelector("figcaption")?.textContent).toBe("说明");
   });
 
+  it("keeps source-line markers usable through legacy and Rico gzh component themes", () => {
+    expect(themeRegistry.resolveThemeHtml("normal", '<h2 data-scroll-source-line="42">章节</h2>')).toContain(
+      'data-scroll-source-line="42"',
+    );
+
+    const transformed = themeRegistry.resolveThemeHtml("plainly-gzh-moyu-green", '<h2 data-scroll-source-line="42">章节</h2>');
+    const root = document.createElement("div");
+    root.innerHTML = transformed;
+    expect(root.querySelector('[data-scroll-source-line="42"]')?.textContent).toContain("章节");
+  });
+
   it("matches the frozen gzh source transform exactly", () => {
     GZH_REMAINING_COMPONENT_THEMES.forEach((theme, index) => {
       const referenceDocument = document.implementation.createHTMLDocument("rico-reference");

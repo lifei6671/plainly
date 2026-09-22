@@ -3,6 +3,7 @@ import GITHUB_CODE_CSS from "../../../template/code/github";
 import {BOX_ID, BASIC_THEME_ID, CODE_THEME_ID, FONT_THEME_ID, LAYOUT_ID, MARKDOWN_THEME_ID} from "../../../utils/constant";
 import {solveHtml} from "../../../utils/converter";
 import {markdownParser, markdownParserWechat} from "../../../utils/helper";
+import {renderMarkdownWithHeadingAnchors} from "../../../utils/syncScroll";
 import {getThemeList, resolveThemeHtmlForTemplate, themeRegistry} from "../..";
 
 export const TECH_DEPTH_TECHNICAL_ARTICLE = `# 从渲染管线理解主题迁移
@@ -62,7 +63,7 @@ export const renderThemePreview = (themeId: string, markdown: string, parserMode
     throw new Error(`Unknown theme: ${themeId}`);
   }
 
-  const rawHtml = (parserMode === "wechat" ? markdownParserWechat : markdownParser).render(markdown);
+  const rawHtml = renderMarkdownWithHeadingAnchors(markdown, parserMode === "wechat" ? markdownParserWechat : markdownParser);
   const previewHtml = resolveThemeHtmlForTemplate(templateNum, rawHtml);
 
   addStyle(BASIC_THEME_ID, BASIC_THEME_CSS);
