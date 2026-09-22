@@ -39,7 +39,7 @@ describe("技术深读 component theme", () => {
     });
     expect(themes.findIndex((theme) => theme.id === "normal")).toBe(0);
     expect(themes.findIndex((theme) => theme.id === "rico-minimalism")).toBe(21);
-    expect(techDepthIndex).toBe(themes.length - 1);
+    expect(techDepthIndex).toBe(26);
     expect(themes.slice(techDepthIndex - RICO_THEMES.length, techDepthIndex).map((theme) => theme.id)).toEqual(
       RICO_THEMES.map((theme) => theme.id),
     );
