@@ -1,6 +1,7 @@
 name = "markdown-nice"
 main = "worker/index.ts"
 compatibility_date = "2026-05-13"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 # TODO: set your Cloudflare account id
