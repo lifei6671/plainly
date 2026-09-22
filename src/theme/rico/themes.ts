@@ -17,7 +17,7 @@ const RICO_COMMIT = "8c22fe5711365ffe646a0987b6d670d22511de58";
 // Rico styles are authored for direct element inlining. These reset only the
 // Plainly markdown wrappers and BASIC_THEME selectors that otherwise leak into
 // generated CSS; the exact Rico declaration follows each reset and wins.
-const withPlainlyCompatibility = (styles: ElementStyleMap): ElementStyleMap => ({
+export const withPlainlyCompatibility = (styles: ElementStyleMap): ElementStyleMap => ({
   ...styles,
   container: `word-break: normal; ${styles.container}`,
   p: `padding: 0; font-size: inherit; ${styles.p}`,
