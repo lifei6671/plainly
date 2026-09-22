@@ -289,8 +289,6 @@ const ensurePreviewMermaidSnapshotReady = async (markdown: string): Promise<bool
         }
         if (typeof mermaid.run === "function") {
           await mermaid.run({nodes: pendingNodes});
-        } else if (typeof mermaid.init === "function") {
-          mermaid.init(undefined, pendingNodes);
         }
       } catch (_error) {
         // 交给 markdown fallback，避免快照流程被图表渲染阻塞。

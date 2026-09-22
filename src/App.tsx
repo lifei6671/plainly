@@ -828,9 +828,7 @@ class App extends Component<AppProps, AppState> {
       const result =
         typeof this.mermaid.run === "function"
           ? this.mermaid.run({nodes})
-          : typeof this.mermaid.init === "function"
-            ? this.mermaid.init(undefined, nodes)
-            : undefined;
+          : undefined;
       if (result && typeof result.then === "function") {
         Promise.resolve(result).then(cacheRenderedNodes).catch(console.error);
       } else {
