@@ -11,11 +11,14 @@
 }
 .nice-themeselect-theme-item {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   padding: 5px 12px 5px 6px;
 }
 .nice-themeselect-theme-item-author {
   color: gray;
+  margin-left: 16px;
+  white-space: nowrap;
 }
 .nice-themeselect-theme-item-name {
   margin-right: 10px;
@@ -46,4 +49,28 @@
   line-height: 22px;
   white-space: nowrap;
   cursor: pointer;
+}
+.nice-overlay .nice-themeselect-root-menu {
+  min-width: 190px;
+}
+.nice-themeselect-group-title {
+  display: flex;
+  justify-content: space-between;
+  min-width: 136px;
+  padding-right: 6px;
+}
+.nice-themeselect-group-count {
+  color: gray;
+  margin-left: 16px;
+}
+.nice-theme-submenu-popup .ant-menu {
+  min-width: 280px;
+}
+.nice-theme-submenu-popup .nice-themeselect-theme-item {
+  min-width: 280px;
+}
+.nice-theme-submenu-popup .ant-menu-item {
+  height: auto;
+  line-height: 22px;
+  padding: 0;
 }
