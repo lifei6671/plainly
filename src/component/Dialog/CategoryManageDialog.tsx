@@ -1,10 +1,13 @@
 import React, {Component} from "react";
 import {observer, inject} from "mobx-react";
 import {Modal, Table, Button, Input, message} from "antd";
-import {ReloadOutlined} from "@ant-design/icons";
+import {HolderOutlined, ReloadOutlined} from "@ant-design/icons";
 import {getDataStore} from "../../data/store";
 import {BrowserDataStore} from "../../data/store/browser/BrowserDataStore";
 import {DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_UUID} from "../../utils/constant";
+import {CATEGORY_ORDER_CHANGED_EVENT, getCategoryOrderConfigKey, sortCategories} from "../../utils/categoryOrder";
+import {setConfigSync} from "../../utils/configStore";
+import "./CategoryManageDialog.css";
 
 @inject("dialog")
 @inject("content")
@@ -12,11 +15,14 @@ import {DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_UUID} from "../../utils/constant
 class CategoryManageDialog extends Component<any, any> {
   wasOpen = false;
 
+  draggingCategoryId: string | null = null;
+
   constructor(props) {
     super(props);
     this.state = {
       categories: [],
       loading: false,
+      dragOverCategoryId: null,
       renameVisible: false,
       renameUuid: null,
       renameValue: "",
@@ -89,12 +95,40 @@ class CategoryManageDialog extends Component<any, any> {
       const store = getDataStore(Number(uid) || 0);
       const categories = await store.listCategoriesWithCount();
       await this.cacheCategories(categories);
-      this.setState({categories});
+      this.setState({categories: sortCategories(categories, Number(uid) || 0)});
     } catch (e) {
       console.error(e);
       message.error("加载目录失败");
     } finally {
       this.setState({loading: false});
+    }
+  };
+
+  handleDragEnd = () => {
+    this.draggingCategoryId = null;
+    this.setState({dragOverCategoryId: null});
+  };
+
+  handleCategoryDrop = (event: React.DragEvent, targetId: string) => {
+    event.preventDefault();
+    const sourceId = this.draggingCategoryId;
+    this.handleDragEnd();
+    if (!sourceId || sourceId === targetId || this.state.loading) return;
+    const categories = [...this.state.categories];
+    const sourceIndex = categories.findIndex((category) => category.category_id === sourceId);
+    const targetIndex = categories.findIndex((category) => category.category_id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const [category] = categories.splice(sourceIndex, 1);
+    categories.splice(targetIndex, 0, category);
+    try {
+      setConfigSync(
+        getCategoryOrderConfigKey(Number(this.getRuntimeUserId()) || 0),
+        categories.map((item) => item.category_id),
+      );
+      this.setState({categories}, () => window.dispatchEvent(new Event(CATEGORY_ORDER_CHANGED_EVENT)));
+    } catch (error) {
+      console.error(error);
+      message.error("保存目录排序失败");
     }
   };
 
@@ -230,7 +264,27 @@ class CategoryManageDialog extends Component<any, any> {
         title: "目录名称",
         dataIndex: "name",
         key: "name",
-        render: (text) => text || DEFAULT_CATEGORY_NAME,
+        render: (text, record) => (
+          <span className="nice-category-name">
+            <button
+              type="button"
+              className="nice-category-drag-handle"
+              draggable={!this.state.loading}
+              disabled={this.state.loading}
+              aria-label={`拖动排序 ${text || DEFAULT_CATEGORY_NAME}`}
+              title="拖动排序"
+              onDragStart={(event) => {
+                this.draggingCategoryId = record.category_id;
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", record.category_id);
+              }}
+              onDragEnd={this.handleDragEnd}
+            >
+              <HolderOutlined />
+            </button>
+            <span>{text || DEFAULT_CATEGORY_NAME}</span>
+          </span>
+        ),
       },
       {
         title: "文件数量",
@@ -293,6 +347,18 @@ class CategoryManageDialog extends Component<any, any> {
             dataSource={this.state.categories}
             loading={this.state.loading}
             pagination={false}
+            onRow={(record) => ({
+              className: this.state.dragOverCategoryId === record.category_id ? "nice-category-drop-target" : "",
+              onDragOver: (event) => {
+                if (!this.draggingCategoryId || this.state.loading) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                if (this.state.dragOverCategoryId !== record.category_id) {
+                  this.setState({dragOverCategoryId: record.category_id});
+                }
+              },
+              onDrop: (event) => this.handleCategoryDrop(event, record.category_id),
+            })}
           />
         </Modal>
         <Modal

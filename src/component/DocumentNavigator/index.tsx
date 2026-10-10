@@ -13,6 +13,8 @@ import {
 import {Category, DocumentMeta, getDataStore} from "../../data/store";
 import {markIndexDirty, scheduleIndexRebuild} from "../../search";
 import {DEFAULT_CATEGORY_NAME, DEFAULT_CATEGORY_UUID} from "../../utils/constant";
+import {getConfigSync, setConfigSync} from "../../utils/configStore";
+import {CATEGORY_ORDER_CHANGED_EVENT, sortCategories} from "../../utils/categoryOrder";
 import {buildDocumentTree} from "./tree";
 import "./DocumentNavigator.css";
 
@@ -79,10 +81,19 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
   }
 
   componentDidMount() {
+    window.addEventListener(CATEGORY_ORDER_CHANGED_EVENT, this.handleCategoryOrderChange);
     if (this.isVisible(this.props)) {
       this.loadDocuments();
     }
   }
+
+  componentWillUnmount() {
+    window.removeEventListener(CATEGORY_ORDER_CHANGED_EVENT, this.handleCategoryOrderChange);
+  }
+
+  handleCategoryOrderChange = () => {
+    this.setState((previousState) => ({categories: sortCategories(previousState.categories, this.props.userId)}));
+  };
 
   componentDidUpdate(previousProps: DocumentNavigatorProps) {
     const wasVisible = this.isVisible(previousProps);
@@ -97,6 +108,30 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
 
   isVisible = (props: DocumentNavigatorProps) => props.open || props.pinned;
 
+  getCollapsedKeysConfigKey = () =>
+    `documentNavigatorCollapsedKeys:${this.props.isRemoteMode ? "remote" : "local"}:${this.props.userId}`;
+
+  getCollapsedKeys = (): string[] => {
+    try {
+      const keys = getConfigSync(this.getCollapsedKeysConfigKey(), []);
+      return Array.isArray(keys) && keys.every((key) => typeof key === "string") ? keys : [];
+    } catch (error) {
+      console.error(error);
+      return [];
+    }
+  };
+
+  persistCollapsedKeys = () => {
+    const collapsedKeys = buildDocumentTree(this.state.categories, this.state.documents)
+      .map((item) => categoryKey(item.category ? item.category.category_id : "uncategorized"))
+      .filter((key) => !this.state.expandedKeys.includes(key));
+    try {
+      setConfigSync(this.getCollapsedKeysConfigKey(), collapsedKeys);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   loadDocuments = async () => {
     const loadVersion = ++this.loadVersion;
     this.setState({loading: true, loadFailed: false});
@@ -105,12 +140,13 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
       await store.init();
       const [categories, documents] = await Promise.all([store.listCategories(), store.listAllDocuments()]);
       if (loadVersion !== this.loadVersion) return;
+      const collapsedKeys = this.getCollapsedKeys();
       this.setState({
-        categories,
+        categories: sortCategories(categories, this.props.userId),
         documents,
-        expandedKeys: buildDocumentTree(categories, documents).map((item) =>
-          categoryKey(item.category ? item.category.category_id : "uncategorized"),
-        ),
+        expandedKeys: buildDocumentTree(categories, documents)
+          .map((item) => categoryKey(item.category ? item.category.category_id : "uncategorized"))
+          .filter((key) => !collapsedKeys.includes(key)),
         loading: false,
       });
     } catch (error) {
@@ -122,16 +158,19 @@ export class DocumentNavigator extends Component<DocumentNavigatorProps, Documen
   };
 
   handleExpand = (expandedKeys: string[]) => {
-    this.setState({expandedKeys});
+    this.setState({expandedKeys}, this.persistCollapsedKeys);
   };
 
   toggleCategory = (categoryId: string) => {
     const key = categoryKey(categoryId);
-    this.setState((previousState) => ({
-      expandedKeys: previousState.expandedKeys.includes(key)
-        ? previousState.expandedKeys.filter((expandedKey) => expandedKey !== key)
-        : [...previousState.expandedKeys, key],
-    }));
+    this.setState(
+      (previousState) => ({
+        expandedKeys: previousState.expandedKeys.includes(key)
+          ? previousState.expandedKeys.filter((expandedKey) => expandedKey !== key)
+          : [...previousState.expandedKeys, key],
+      }),
+      this.persistCollapsedKeys,
+    );
   };
 
   handleClose = () => {

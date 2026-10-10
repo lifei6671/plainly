@@ -22,7 +22,10 @@ jest.mock("antd", () => ({
   message,
 }));
 
-jest.mock("../../data/store", () => ({getDataStore}));
+jest.mock("../../data/store", () => ({
+  getDataStore,
+  resolveDataStoreInfo: (userId) => ({userId, effectiveMode: userId > 0 ? "remote" : "browser"}),
+}));
 jest.mock("../../search", () => ({markIndexDirty: jest.fn(() => Promise.resolve()), scheduleIndexRebuild: jest.fn()}));
 
 import {DocumentNavigator, getDocumentNavigatorStore} from ".";
@@ -77,6 +80,7 @@ const createDeferred = () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.localStorage.clear();
 });
 
 it("uses getDataStore with the supplied user id", () => {
@@ -99,6 +103,126 @@ it("loads categories and documents when opened", async () => {
   expect(store.listCategories).toHaveBeenCalled();
   expect(store.listAllDocuments).toHaveBeenCalled();
   expect(component.state.expandedKeys).toEqual(["category:category-1"]);
+});
+
+it("preserves collapsed directories after reopening and remounting the navigator", async () => {
+  getDataStore.mockReturnValue(createStore());
+  const component = new DocumentNavigator(createProps() as any);
+  attachState(component);
+  await component.loadDocuments();
+
+  component.renderTree().props.treeData[0].title.props.onClick();
+  component.handleClose();
+  await component.loadDocuments();
+  expect(component.renderTree().props.expandedKeys).toEqual([]);
+
+  const reopened = new DocumentNavigator(createProps() as any);
+  attachState(reopened);
+  await reopened.loadDocuments();
+  expect(reopened.renderTree().props.treeData[0].title.props["aria-expanded"]).toBe(false);
+});
+
+it("persists both collapse and expansion through the Tree expand handler", async () => {
+  getDataStore.mockReturnValue(createStore());
+  const component = new DocumentNavigator(createProps() as any);
+  attachState(component);
+  await component.loadDocuments();
+
+  component.renderTree().props.onExpand([]);
+  await component.loadDocuments();
+  expect(component.renderTree().props.expandedKeys).toEqual([]);
+
+  component.renderTree().props.onExpand(["category:category-1"]);
+  const reopened = new DocumentNavigator(createProps() as any);
+  attachState(reopened);
+  await reopened.loadDocuments();
+  expect(reopened.renderTree().props.expandedKeys).toEqual(["category:category-1"]);
+});
+
+it("keeps saved directories collapsed while expanding newly added directories", async () => {
+  const store = createStore();
+  getDataStore.mockReturnValue(store);
+  const component = new DocumentNavigator(createProps() as any);
+  attachState(component);
+  await component.loadDocuments();
+  component.toggleCategory("category-1");
+
+  store.listCategories.mockResolvedValue([category, {...category, id: 2, category_id: "category-2"}]);
+  await component.loadDocuments();
+  expect(component.renderTree().props.expandedKeys).toEqual(["category:category-2"]);
+});
+
+it("restores the collapsed uncategorized directory", async () => {
+  const store = createStore();
+  store.listCategories.mockResolvedValue([]);
+  getDataStore.mockReturnValue(store);
+  const component = new DocumentNavigator(createProps() as any);
+  attachState(component);
+  await component.loadDocuments();
+  component.toggleCategory("uncategorized");
+
+  const reopened = new DocumentNavigator(createProps() as any);
+  attachState(reopened);
+  await reopened.loadDocuments();
+  expect(reopened.renderTree().props.expandedKeys).toEqual([]);
+});
+
+it("separates saved directory states by account and document source", async () => {
+  const store = {...createStore(), setConfig: jest.fn()};
+  getDataStore.mockReturnValue(store);
+  const component = new DocumentNavigator(createProps({userId: 42, isRemoteMode: true}) as any);
+  attachState(component);
+  await component.loadDocuments();
+  component.toggleCategory("category-1");
+
+  for (const overrides of [{userId: 43, isRemoteMode: true}, {userId: 42, isRemoteMode: false}]) {
+    (component as any).props = createProps(overrides);
+    await component.loadDocuments();
+    expect(component.renderTree().props.expandedKeys).toEqual(["category:category-1"]);
+  }
+
+  (component as any).props = createProps({userId: 42, isRemoteMode: true});
+  await component.loadDocuments();
+  expect(component.renderTree().props.expandedKeys).toEqual([]);
+  expect(store.setConfig).not.toHaveBeenCalled();
+});
+
+it("ignores invalid saved directory states", async () => {
+  getDataStore.mockReturnValue(createStore());
+  for (const raw of ["invalid json", "{}", '[null, 1]', "null"]) {
+    window.localStorage.setItem("documentNavigatorCollapsedKeys:local:0", raw);
+    const component = new DocumentNavigator(createProps() as any);
+    attachState(component);
+    await component.loadDocuments();
+    expect(component.renderTree().props.expandedKeys).toEqual(["category:category-1"]);
+  }
+});
+
+it("still loads and toggles directories when browser storage is unavailable", async () => {
+  getDataStore.mockReturnValue(createStore());
+  const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+  const storagePrototype = Object.getPrototypeOf(window.localStorage);
+  const getItem = jest.spyOn(storagePrototype, "getItem").mockImplementation(() => {
+    throw new Error("storage unavailable");
+  });
+  const setItem = jest.spyOn(storagePrototype, "setItem").mockImplementation(() => {
+    throw new Error("storage unavailable");
+  });
+  try {
+    const component = new DocumentNavigator(createProps() as any);
+    attachState(component);
+    await component.loadDocuments();
+    expect(component.state.loadFailed).toBe(false);
+    expect(component.renderTree().props.expandedKeys).toEqual(["category:category-1"]);
+
+    component.toggleCategory("category-1");
+    expect(component.renderTree().props.expandedKeys).toEqual([]);
+    expect(message.error).not.toHaveBeenCalled();
+  } finally {
+    getItem.mockRestore();
+    setItem.mockRestore();
+    consoleError.mockRestore();
+  }
 });
 
 it("loads a document into the editor and closes only when not pinned", async () => {
