@@ -36,16 +36,41 @@ async function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: nu
   });
 }
 
+async function shouldPreserveAnimation(file: Blob) {
+  if (file.type === "image/gif") {
+    return true;
+  }
+
+  const header = new Uint8Array(await file.slice(0, 21).arrayBuffer());
+  const signature = String.fromCharCode(...header);
+  if (signature.startsWith("GIF87a") || signature.startsWith("GIF89a")) {
+    return true;
+  }
+
+  // WebP VP8X 的 Animation 标志位；仅检查文件头，避免解码丢失动画帧。
+  return (
+    header.length >= 21 &&
+    signature.startsWith("RIFF") &&
+    signature.slice(8, 16) === "WEBPVP8X" &&
+    // eslint-disable-next-line no-bitwise
+    (header[20] & 0x02) !== 0
+  );
+}
+
 /**
- * 压缩（缩放）+ 转 WebP，浏览器优先，WASM 兜底
+ * GIF 和动画 WebP 原样返回，其余图片压缩（缩放）+ 转 WebP，浏览器优先，WASM 兜底
  * @param {File|Blob} file
  * @param {Object} opts
  * @param {number} opts.quality 0~1，建议 0.75~0.88
  * @param {number} opts.maxWidth
  * @param {number} opts.maxHeight
- * @returns {Promise<Blob>} image/webp
+ * @returns {Promise<Blob>} 原始动图或压缩后的 image/webp
  */
 export default async function compressThenWebp(file: Blob, opts: CompressOptions = {}) {
+  if (await shouldPreserveAnimation(file)) {
+    return file;
+  }
+
   const quality = clamp(opts.quality ?? 0.82, 0.05, 0.98);
   const maxWidth = opts.maxWidth ?? 2560;
   const maxHeight = opts.maxHeight ?? 2560;

@@ -677,7 +677,9 @@ export const r2Upload = async ({
           maxWidth: maxDimension,
           maxHeight: maxDimension,
         });
-        workingFile = toWebpFile(webpBlob, getUploadFileName(uploadFile, getUploadFileName(sourceFile)));
+        if (webpBlob !== uploadFile) {
+          workingFile = toWebpFile(webpBlob, getUploadFileName(uploadFile, getUploadFileName(sourceFile)));
+        }
       } catch (error) {
         workingFile = uploadFile;
       }

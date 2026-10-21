@@ -5,6 +5,8 @@ declare const jest: any;
 declare const it: any;
 declare const expect: any;
 declare const beforeEach: any;
+declare const afterEach: any;
+declare const describe: any;
 
 jest.mock("mobx-react", () => ({
   inject: () => (Comp) => Comp,
@@ -44,6 +46,7 @@ jest.mock("antd", () => {
   return {
     Button: ({children, ...props}) => React.createElement("button", {...props, type: "button"}, children),
     Tooltip: ({children}) => React.createElement(React.Fragment, null, children),
+    message: {error: jest.fn()},
   };
 });
 
@@ -176,6 +179,8 @@ jest.mock("./search", () => ({
 }));
 
 import App from "./App";
+import {message} from "antd";
+import {uploadAdaptor} from "./utils/imageHosting";
 import pluginCenter from "./utils/pluginCenter";
 import {PLAINLY_MERMAID_CONFIG} from "./utils/mermaidConfig";
 import {resolveThemeHtmlForTemplate} from "./theme";
@@ -232,6 +237,119 @@ const props = {
     isAliyunOpen: false,
   },
 };
+
+describe("pasting images copied from a web page", () => {
+  const source = "https://raw.githubusercontent.com/alchaincyf/huashu-motion/main/docs/media/hero.gif";
+  let fetchDescriptor: PropertyDescriptor | undefined;
+  let abortDescriptor: PropertyDescriptor | undefined;
+  let fetchImage: any;
+
+  beforeEach(() => {
+    fetchDescriptor = Object.getOwnPropertyDescriptor(window, "fetch");
+    fetchImage = jest.fn().mockResolvedValue({ok: true, blob: async () => new Blob(["GIF89a"], {type: "image/gif"})});
+    Object.defineProperty(window, "fetch", {configurable: true, value: fetchImage});
+    abortDescriptor = Object.getOwnPropertyDescriptor(window, "AbortController");
+    Object.defineProperty(window, "AbortController", {
+      configurable: true,
+      value: class {
+        signal = {};
+        abort() {}
+      },
+    });
+  });
+
+  afterEach(() => {
+    if (abortDescriptor) {
+      Object.defineProperty(window, "AbortController", abortDescriptor);
+    } else {
+      delete (window as any).AbortController;
+    }
+    if (fetchDescriptor) {
+      Object.defineProperty(window, "fetch", fetchDescriptor);
+    } else {
+      delete (window as any).fetch;
+    }
+  });
+
+  const pasteEvent = (html: string, files: File[] = [new File(["png"], "image.png", {type: "image/png"})]) => ({
+    clipboardData: {files, getData: (type) => (type === "text/html" ? html : "")},
+    preventDefault: jest.fn(),
+  });
+
+  it("uploads the original GIF instead of the clipboard PNG snapshot", async () => {
+    const event = pasteEvent(`<img src="${source}">`);
+    await new App(props).handlePaste(null, event);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(fetchImage).toHaveBeenCalledWith(source, expect.objectContaining({credentials: "omit"}));
+    const file = (uploadAdaptor as any).mock.calls[0][0].file;
+    expect(file.name).toBe("hero.gif");
+    expect(file.type).toBe("image/gif");
+    const data = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsText(file);
+    });
+    expect(data).toBe("GIF89a");
+  });
+
+  it("recovers WebP originals from extensionless URLs", async () => {
+    fetchImage.mockResolvedValue({ok: true, blob: async () => new Blob(["webp"], {type: "image/webp"})});
+    await new App(props).handlePaste(null, pasteEvent('<img src="https://images.example.com/animation">'));
+    const file = (uploadAdaptor as any).mock.calls[0][0].file;
+    expect(file.type).toBe("image/webp");
+    expect(file.name).toBe("animation.webp");
+  });
+
+  it("reads GitHub raw links through the CORS-enabled original host", async () => {
+    const event = pasteEvent('<img src="https://github.com/alchaincyf/huashu-motion/raw/main/docs/media/hero.gif">');
+    await new App(props).handlePaste(null, event);
+    expect(fetchImage).toHaveBeenCalledWith(source, expect.objectContaining({credentials: "omit"}));
+  });
+
+  it("handles an image-only HTML fragment without a clipboard file", async () => {
+    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`, []));
+    expect(uploadAdaptor).toHaveBeenCalledWith(expect.objectContaining({file: expect.objectContaining({type: "image/gif"})}));
+  });
+
+  it("keeps an original GIF file without fetching its HTML source again", async () => {
+    const file = new File(["GIF89a"], "original.gif", {type: "image/gif"});
+    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`, [file]));
+    expect(fetchImage).not.toHaveBeenCalled();
+    expect(uploadAdaptor).toHaveBeenCalledWith({file, content: props.content});
+  });
+
+  it("keeps multiple pasted files in order", async () => {
+    const files = [new File(["a"], "a.png", {type: "image/png"}), new File(["b"], "b.png", {type: "image/png"})];
+    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`, files));
+    expect(fetchImage).not.toHaveBeenCalled();
+    expect((uploadAdaptor as any).mock.calls.map(([options]) => options.file)).toEqual(files);
+  });
+
+  it("leaves mixed article text and images to normal text paste", async () => {
+    const event = pasteEvent(`<p>article text</p><img src="${source}">`, []);
+    await new App(props).handlePaste(null, event);
+    expect(fetchImage).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(uploadAdaptor).not.toHaveBeenCalled();
+  });
+
+  it("reports an unreadable original instead of uploading a static replacement", async () => {
+    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
+    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`));
+    expect(uploadAdaptor).not.toHaveBeenCalled();
+    expect(message.error).toHaveBeenCalledWith("无法读取网页原图，请将图片另存为文件后上传，以保留动画");
+  });
+
+  it.each([
+    {ok: false, blob: async () => new Blob(["GIF89a"], {type: "image/gif"})},
+    {ok: true, blob: async () => new Blob(["not an image"], {type: "text/html"})},
+  ])("does not upload a failed or non-image original response", async (response) => {
+    fetchImage.mockResolvedValue(response);
+    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`));
+    expect(uploadAdaptor).not.toHaveBeenCalled();
+    expect(message.error).toHaveBeenCalled();
+  });
+});
 
 beforeEach(() => {
   jest.clearAllMocks();

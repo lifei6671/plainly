@@ -41,7 +41,7 @@ import bindHotkeys, {betterTab, rightClick} from "./utils/hotkey";
 import AuthModal from "./component/Auth/AuthModal";
 import DocumentNavigator from "./component/DocumentNavigator";
 import {getConfigSync, setConfigSync} from "./utils/configStore";
-import {Button, Tooltip} from "antd";
+import {Button, Tooltip, message} from "antd";
 import {FolderOpenOutlined} from "@ant-design/icons";
 import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
 import {getDataStore} from "./data/store/index";
@@ -789,11 +789,53 @@ class App extends Component<AppProps, AppState> {
     }
   };
 
-  handlePaste = (_instance: any, e: any) => {
-    if (e.clipboardData && e.clipboardData.files) {
-      for (let i = 0; i < e.clipboardData.files.length; i++) {
-        uploadAdaptor({file: e.clipboardData.files[i], content: this.props.content});
+  handlePaste = async (_instance: any, e: any) => {
+    const clipboard = e.clipboardData;
+    if (!clipboard) {
+      return;
+    }
+    const files = Array.from(clipboard.files || []) as File[];
+    const html = clipboard.getData?.("text/html") || "";
+    // 网页复制的图片可能只提供 PNG 静态副本；从 HTML 中读取原图以保留动画。
+    if (html && (files.length === 0 || (files.length === 1 && files[0].type === "image/png"))) {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const images = doc.querySelectorAll("img");
+      const source = images.length === 1 ? images[0].getAttribute("src") || "" : "";
+      if (!doc.body.textContent.trim() && /^https?:\/\//i.test(source)) {
+        e.preventDefault();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        let originalFile: File;
+        try {
+          const url = new URL(source);
+          // GitHub raw 中转不允许跨域读取，直接请求其公开原图地址。
+          if (url.hostname === "github.com" && /^\/[^/]+\/[^/]+\/raw\//.test(url.pathname)) {
+            url.hostname = "raw.githubusercontent.com";
+            url.pathname = url.pathname.replace(/^(\/[^/]+\/[^/]+)\/raw\//, "$1/");
+          }
+          const response = await fetch(url.href, {credentials: "omit", signal: controller.signal});
+          if (!response.ok) {
+            throw new Error("读取原图失败");
+          }
+          const blob = await response.blob();
+          if (!blob.type.startsWith("image/")) {
+            throw new Error("原图响应不是图片");
+          }
+          const name = url.pathname.split("/").pop() || "image";
+          const extension = blob.type.split("/")[1].replace("jpeg", "jpg");
+          originalFile = new File([blob], `${name.replace(/\.[^.]+$/, "")}.${extension}`, {type: blob.type});
+        } catch (error) {
+          message.error("无法读取网页原图，请将图片另存为文件后上传，以保留动画");
+          return;
+        } finally {
+          clearTimeout(timer);
+        }
+        uploadAdaptor({file: originalFile, content: this.props.content});
+        return;
       }
+    }
+    for (const file of files) {
+      uploadAdaptor({file, content: this.props.content});
     }
   };
 
