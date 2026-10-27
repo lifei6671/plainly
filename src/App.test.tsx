@@ -306,13 +306,96 @@ describe("pasting images copied from a web page", () => {
     expect(fetchImage).toHaveBeenCalledWith(source, expect.objectContaining({credentials: "omit"}));
   });
 
+  it("reads GitHub LFS images from the media host instead of uploading the pointer", async () => {
+    const image = "https://github.com/baidu/Unlimited-OCR/raw/main/assets/Unlimited-OCR2.png";
+    fetchImage
+      .mockResolvedValueOnce({
+        ok: true,
+        blob: async () => new Blob(["version https://git-lfs.github.com/spec/v1"], {type: "text/plain"}),
+      })
+      .mockResolvedValueOnce({ok: true, blob: async () => new Blob(["original png"], {type: "image/png"})});
+    await new App(props).handlePaste(null, pasteEvent(`<img src="${image}">`));
+    expect(fetchImage.mock.calls.map(([url]) => url)).toEqual([
+      "https://raw.githubusercontent.com/baidu/Unlimited-OCR/main/assets/Unlimited-OCR2.png",
+      "https://media.githubusercontent.com/media/baidu/Unlimited-OCR/main/assets/Unlimited-OCR2.png",
+    ]);
+    expect(uploadAdaptor).toHaveBeenCalledTimes(1);
+    const file = (uploadAdaptor as any).mock.calls[0][0].file;
+    expect(file.name).toBe("Unlimited-OCR2.png");
+    expect(file.type).toBe("image/png");
+    expect(file.size).toBe("original png".length);
+    expect(message.error).not.toHaveBeenCalled();
+  });
+
+  it.each(["gif", "webp"])("recovers a GitHub %s original after the raw connection fails", async (extension) => {
+    const image = `https://raw.githubusercontent.com/owner/repo/main/animation.${extension}`;
+    fetchImage
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ok: true, blob: async () => new Blob(["original animation"], {type: `image/${extension}`})});
+    await new App(props).handlePaste(null, pasteEvent(`<img src="${image}">`));
+    expect(fetchImage).toHaveBeenLastCalledWith(
+      `https://media.githubusercontent.com/media/owner/repo/main/animation.${extension}`,
+      expect.objectContaining({credentials: "omit"}),
+    );
+    const file = (uploadAdaptor as any).mock.calls[0][0].file;
+    expect(file.type).toBe(`image/${extension}`);
+    expect(file.size).toBe("original animation".length);
+  });
+
+  it("uploads the clipboard PNG when a static image cannot be downloaded", async () => {
+    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
+    const file = new File(["clipboard png"], "image.png", {type: "image/png"});
+    const event = pasteEvent('<img src="https://images.example.com/photo.PNG?download=1">', [file]);
+    await new App(props).handlePaste(null, event);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(uploadAdaptor).toHaveBeenCalledWith({file, content: props.content});
+    expect(message.error).not.toHaveBeenCalled();
+  });
+
+  it("uses the clipboard PNG when both GitHub image hosts are unavailable", async () => {
+    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
+    const file = new File(["clipboard png"], "image.png", {type: "image/png"});
+    await new App(props).handlePaste(null, pasteEvent(
+      '<img src="https://github.com/baidu/Unlimited-OCR/raw/main/assets/Unlimited-OCR2.png">', [file],
+    ));
+    expect(fetchImage).toHaveBeenCalledTimes(2);
+    expect(uploadAdaptor).toHaveBeenCalledWith({file, content: props.content});
+  });
+
+  it("reports an unreadable static original when the clipboard contains no image file", async () => {
+    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
+    await new App(props).handlePaste(null, pasteEvent('<img src="https://images.example.com/photo.png">', []));
+    expect(uploadAdaptor).not.toHaveBeenCalled();
+    expect(message.error).toHaveBeenCalledWith("无法读取网页原图，请将图片另存为文件后上传");
+  });
+
+  it.each(["animation.gif", "animation.webp", "animation"])(
+    "does not replace an unreadable %s with the clipboard PNG", async (path) => {
+      fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
+      await new App(props).handlePaste(null, pasteEvent(`<img src="https://images.example.com/${path}">`));
+      expect(fetchImage).toHaveBeenCalledTimes(1);
+      expect(uploadAdaptor).not.toHaveBeenCalled();
+      expect(message.error).toHaveBeenCalledWith("无法读取网页原图，请将图片另存为文件后上传，以保留动画");
+    },
+  );
+
+  it.each(["gif", "webp"])("does not replace an unreadable GitHub %s after both hosts fail", async (extension) => {
+    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
+    await new App(props).handlePaste(null, pasteEvent(
+      `<img src="https://github.com/owner/repo/raw/main/animation.${extension}">`,
+    ));
+    expect(fetchImage).toHaveBeenCalledTimes(2);
+    expect(uploadAdaptor).not.toHaveBeenCalled();
+    expect(message.error).toHaveBeenCalledWith("无法读取网页原图，请将图片另存为文件后上传，以保留动画");
+  });
+
   it("handles an image-only HTML fragment without a clipboard file", async () => {
     await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`, []));
     expect(uploadAdaptor).toHaveBeenCalledWith(expect.objectContaining({file: expect.objectContaining({type: "image/gif"})}));
   });
 
-  it("keeps an original GIF file without fetching its HTML source again", async () => {
-    const file = new File(["GIF89a"], "original.gif", {type: "image/gif"});
+  it.each(["gif", "webp"])("keeps an original %s file without fetching its HTML source again", async (extension) => {
+    const file = new File(["original animation"], `original.${extension}`, {type: `image/${extension}`});
     await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`, [file]));
     expect(fetchImage).not.toHaveBeenCalled();
     expect(uploadAdaptor).toHaveBeenCalledWith({file, content: props.content});

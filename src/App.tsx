@@ -806,27 +806,50 @@ class App extends Component<AppProps, AppState> {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 30000);
         let originalFile: File;
+        let isStaticSource = false;
         try {
           const url = new URL(source);
+          // 仅明确的静态图片地址允许使用剪贴板副本；GIF、WebP 和无扩展名地址仍需原图。
+          isStaticSource = /\.(png|jpe?g|bmp)$/i.test(url.pathname);
           // GitHub raw 中转不允许跨域读取，直接请求其公开原图地址。
           if (url.hostname === "github.com" && /^\/[^/]+\/[^/]+\/raw\//.test(url.pathname)) {
             url.hostname = "raw.githubusercontent.com";
             url.pathname = url.pathname.replace(/^(\/[^/]+\/[^/]+)\/raw\//, "$1/");
           }
-          const response = await fetch(url.href, {credentials: "omit", signal: controller.signal});
-          if (!response.ok) {
-            throw new Error("读取原图失败");
-          }
-          const blob = await response.blob();
-          if (!blob.type.startsWith("image/")) {
-            throw new Error("原图响应不是图片");
+          const readImage = async (imageUrl: URL) => {
+            const response = await fetch(imageUrl.href, {credentials: "omit", signal: controller.signal});
+            if (!response.ok) {
+              throw new Error("读取原图失败");
+            }
+            const image = await response.blob();
+            if (!image.type.startsWith("image/")) {
+              throw new Error("原图响应不是图片");
+            }
+            return image;
+          };
+          let blob: Blob;
+          try {
+            blob = await readImage(url);
+          } catch (error) {
+            if (url.hostname !== "raw.githubusercontent.com" || controller.signal.aborted) {
+              throw error;
+            }
+            // Git LFS 的 raw 响应是文本指针，实际图片由 media 地址提供。
+            const mediaUrl = new URL(url.href);
+            mediaUrl.hostname = "media.githubusercontent.com";
+            mediaUrl.pathname = `/media${url.pathname}`;
+            blob = await readImage(mediaUrl);
           }
           const name = url.pathname.split("/").pop() || "image";
           const extension = blob.type.split("/")[1].replace("jpeg", "jpg");
           originalFile = new File([blob], `${name.replace(/\.[^.]+$/, "")}.${extension}`, {type: blob.type});
         } catch (error) {
-          message.error("无法读取网页原图，请将图片另存为文件后上传，以保留动画");
-          return;
+          if (isStaticSource && files.length === 1) {
+            [originalFile] = files;
+          } else {
+            message.error(`无法读取网页原图，请将图片另存为文件后上传${isStaticSource ? "" : "，以保留动画"}`);
+            return;
+          }
         } finally {
           clearTimeout(timer);
         }
