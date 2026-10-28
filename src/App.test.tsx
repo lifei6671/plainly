@@ -21,32 +21,11 @@ jest.mock(
     },
 );
 
-jest.mock("lodash.throttle", () => (fn) => fn);
-
-const mockDebounce = jest.fn((fn) => {
-  let pending = false;
-  const debounced: any = jest.fn(() => {
-    pending = true;
-  });
-  debounced.cancel = jest.fn(() => {
-    pending = false;
-  });
-  debounced.flush = jest.fn(() => {
-    if (pending) {
-      pending = false;
-      return fn();
-    }
-  });
-  return debounced;
-});
-
-jest.mock("lodash.debounce", () => mockDebounce);
-
 jest.mock("antd", () => {
   return {
     Button: ({children, ...props}) => React.createElement("button", {...props, type: "button"}, children),
     Tooltip: ({children}) => React.createElement(React.Fragment, null, children),
-    message: {error: jest.fn()},
+    message: {error: jest.fn(), warning: jest.fn()},
   };
 });
 
@@ -126,13 +105,17 @@ jest.mock("./utils/pluginCenter", () => ({
   mermaid: false,
 }));
 
-jest.mock("mermaid", () => ({
-  __esModule: true,
-  default: {
-    initialize: jest.fn(),
-    run: jest.fn(),
-  },
-}), {virtual: true});
+jest.mock(
+  "mermaid",
+  () => ({
+    __esModule: true,
+    default: {
+      initialize: jest.fn(),
+      run: jest.fn(),
+    },
+  }),
+  {virtual: true},
+);
 
 jest.mock("./utils/imageHosting", () => ({
   uploadAdaptor: jest.fn(),
@@ -179,11 +162,10 @@ jest.mock("./search", () => ({
 }));
 
 import App from "./App";
-import {message} from "antd";
-import {uploadAdaptor} from "./utils/imageHosting";
+import MarkdownEditor from "./layout/MarkdownEditor";
+import MarkdownPreview from "./layout/MarkdownPreview";
+import StatusBar from "./layout/StatusBar";
 import pluginCenter from "./utils/pluginCenter";
-import {PLAINLY_MERMAID_CONFIG} from "./utils/mermaidConfig";
-import {resolveThemeHtmlForTemplate} from "./theme";
 import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
 import {getDataStore} from "./data/store/index";
 import {
@@ -238,232 +220,10 @@ const props = {
   },
 };
 
-describe("pasting images copied from a web page", () => {
-  const source = "https://raw.githubusercontent.com/alchaincyf/huashu-motion/main/docs/media/hero.gif";
-  let fetchDescriptor: PropertyDescriptor | undefined;
-  let abortDescriptor: PropertyDescriptor | undefined;
-  let fetchImage: any;
-
-  beforeEach(() => {
-    fetchDescriptor = Object.getOwnPropertyDescriptor(window, "fetch");
-    fetchImage = jest.fn().mockResolvedValue({ok: true, blob: async () => new Blob(["GIF89a"], {type: "image/gif"})});
-    Object.defineProperty(window, "fetch", {configurable: true, value: fetchImage});
-    abortDescriptor = Object.getOwnPropertyDescriptor(window, "AbortController");
-    Object.defineProperty(window, "AbortController", {
-      configurable: true,
-      value: class {
-        signal = {};
-        abort() {}
-      },
-    });
-  });
-
-  afterEach(() => {
-    if (abortDescriptor) {
-      Object.defineProperty(window, "AbortController", abortDescriptor);
-    } else {
-      delete (window as any).AbortController;
-    }
-    if (fetchDescriptor) {
-      Object.defineProperty(window, "fetch", fetchDescriptor);
-    } else {
-      delete (window as any).fetch;
-    }
-  });
-
-  const pasteEvent = (html: string, files: File[] = [new File(["png"], "image.png", {type: "image/png"})]) => ({
-    clipboardData: {files, getData: (type) => (type === "text/html" ? html : "")},
-    preventDefault: jest.fn(),
-  });
-
-  it("uploads the original GIF instead of the clipboard PNG snapshot", async () => {
-    const event = pasteEvent(`<img src="${source}">`);
-    await new App(props).handlePaste(null, event);
-    expect(event.preventDefault).toHaveBeenCalled();
-    expect(fetchImage).toHaveBeenCalledWith(source, expect.objectContaining({credentials: "omit"}));
-    const file = (uploadAdaptor as any).mock.calls[0][0].file;
-    expect(file.name).toBe("hero.gif");
-    expect(file.type).toBe("image/gif");
-    const data = await new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.readAsText(file);
-    });
-    expect(data).toBe("GIF89a");
-  });
-
-  it("recovers WebP originals from extensionless URLs", async () => {
-    fetchImage.mockResolvedValue({ok: true, blob: async () => new Blob(["webp"], {type: "image/webp"})});
-    await new App(props).handlePaste(null, pasteEvent('<img src="https://images.example.com/animation">'));
-    const file = (uploadAdaptor as any).mock.calls[0][0].file;
-    expect(file.type).toBe("image/webp");
-    expect(file.name).toBe("animation.webp");
-  });
-
-  it("reads GitHub raw links through the CORS-enabled original host", async () => {
-    const event = pasteEvent('<img src="https://github.com/alchaincyf/huashu-motion/raw/main/docs/media/hero.gif">');
-    await new App(props).handlePaste(null, event);
-    expect(fetchImage).toHaveBeenCalledWith(source, expect.objectContaining({credentials: "omit"}));
-  });
-
-  it("reads GitHub LFS images from the media host instead of uploading the pointer", async () => {
-    const image = "https://github.com/baidu/Unlimited-OCR/raw/main/assets/Unlimited-OCR2.png";
-    fetchImage
-      .mockResolvedValueOnce({
-        ok: true,
-        blob: async () => new Blob(["version https://git-lfs.github.com/spec/v1"], {type: "text/plain"}),
-      })
-      .mockResolvedValueOnce({ok: true, blob: async () => new Blob(["original png"], {type: "image/png"})});
-    await new App(props).handlePaste(null, pasteEvent(`<img src="${image}">`));
-    expect(fetchImage.mock.calls.map(([url]) => url)).toEqual([
-      "https://raw.githubusercontent.com/baidu/Unlimited-OCR/main/assets/Unlimited-OCR2.png",
-      "https://media.githubusercontent.com/media/baidu/Unlimited-OCR/main/assets/Unlimited-OCR2.png",
-    ]);
-    expect(uploadAdaptor).toHaveBeenCalledTimes(1);
-    const file = (uploadAdaptor as any).mock.calls[0][0].file;
-    expect(file.name).toBe("Unlimited-OCR2.png");
-    expect(file.type).toBe("image/png");
-    expect(file.size).toBe("original png".length);
-    expect(message.error).not.toHaveBeenCalled();
-  });
-
-  it.each(["gif", "webp"])("recovers a GitHub %s original after the raw connection fails", async (extension) => {
-    const image = `https://raw.githubusercontent.com/owner/repo/main/animation.${extension}`;
-    fetchImage
-      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
-      .mockResolvedValueOnce({ok: true, blob: async () => new Blob(["original animation"], {type: `image/${extension}`})});
-    await new App(props).handlePaste(null, pasteEvent(`<img src="${image}">`));
-    expect(fetchImage).toHaveBeenLastCalledWith(
-      `https://media.githubusercontent.com/media/owner/repo/main/animation.${extension}`,
-      expect.objectContaining({credentials: "omit"}),
-    );
-    const file = (uploadAdaptor as any).mock.calls[0][0].file;
-    expect(file.type).toBe(`image/${extension}`);
-    expect(file.size).toBe("original animation".length);
-  });
-
-  it("uploads the clipboard PNG when a static image cannot be downloaded", async () => {
-    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
-    const file = new File(["clipboard png"], "image.png", {type: "image/png"});
-    const event = pasteEvent('<img src="https://images.example.com/photo.PNG?download=1">', [file]);
-    await new App(props).handlePaste(null, event);
-    expect(event.preventDefault).toHaveBeenCalled();
-    expect(uploadAdaptor).toHaveBeenCalledWith({file, content: props.content});
-    expect(message.error).not.toHaveBeenCalled();
-  });
-
-  it("uses the clipboard PNG when both GitHub image hosts are unavailable", async () => {
-    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
-    const file = new File(["clipboard png"], "image.png", {type: "image/png"});
-    await new App(props).handlePaste(null, pasteEvent(
-      '<img src="https://github.com/baidu/Unlimited-OCR/raw/main/assets/Unlimited-OCR2.png">', [file],
-    ));
-    expect(fetchImage).toHaveBeenCalledTimes(2);
-    expect(uploadAdaptor).toHaveBeenCalledWith({file, content: props.content});
-  });
-
-  it("reports an unreadable static original when the clipboard contains no image file", async () => {
-    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
-    await new App(props).handlePaste(null, pasteEvent('<img src="https://images.example.com/photo.png">', []));
-    expect(uploadAdaptor).not.toHaveBeenCalled();
-    expect(message.error).toHaveBeenCalledWith("无法读取网页原图，请将图片另存为文件后上传");
-  });
-
-  it.each(["animation.gif", "animation.webp", "animation"])(
-    "does not replace an unreadable %s with the clipboard PNG", async (path) => {
-      fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
-      await new App(props).handlePaste(null, pasteEvent(`<img src="https://images.example.com/${path}">`));
-      expect(fetchImage).toHaveBeenCalledTimes(1);
-      expect(uploadAdaptor).not.toHaveBeenCalled();
-      expect(message.error).toHaveBeenCalledWith("无法读取网页原图，请将图片另存为文件后上传，以保留动画");
-    },
-  );
-
-  it.each(["gif", "webp"])("does not replace an unreadable GitHub %s after both hosts fail", async (extension) => {
-    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
-    await new App(props).handlePaste(null, pasteEvent(
-      `<img src="https://github.com/owner/repo/raw/main/animation.${extension}">`,
-    ));
-    expect(fetchImage).toHaveBeenCalledTimes(2);
-    expect(uploadAdaptor).not.toHaveBeenCalled();
-    expect(message.error).toHaveBeenCalledWith("无法读取网页原图，请将图片另存为文件后上传，以保留动画");
-  });
-
-  it("handles an image-only HTML fragment without a clipboard file", async () => {
-    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`, []));
-    expect(uploadAdaptor).toHaveBeenCalledWith(expect.objectContaining({file: expect.objectContaining({type: "image/gif"})}));
-  });
-
-  it.each(["gif", "webp"])("keeps an original %s file without fetching its HTML source again", async (extension) => {
-    const file = new File(["original animation"], `original.${extension}`, {type: `image/${extension}`});
-    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`, [file]));
-    expect(fetchImage).not.toHaveBeenCalled();
-    expect(uploadAdaptor).toHaveBeenCalledWith({file, content: props.content});
-  });
-
-  it("keeps multiple pasted files in order", async () => {
-    const files = [new File(["a"], "a.png", {type: "image/png"}), new File(["b"], "b.png", {type: "image/png"})];
-    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`, files));
-    expect(fetchImage).not.toHaveBeenCalled();
-    expect((uploadAdaptor as any).mock.calls.map(([options]) => options.file)).toEqual(files);
-  });
-
-  it("leaves mixed article text and images to normal text paste", async () => {
-    const event = pasteEvent(`<p>article text</p><img src="${source}">`, []);
-    await new App(props).handlePaste(null, event);
-    expect(fetchImage).not.toHaveBeenCalled();
-    expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(uploadAdaptor).not.toHaveBeenCalled();
-  });
-
-  it("reports an unreadable original instead of uploading a static replacement", async () => {
-    fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
-    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`));
-    expect(uploadAdaptor).not.toHaveBeenCalled();
-    expect(message.error).toHaveBeenCalledWith("无法读取网页原图，请将图片另存为文件后上传，以保留动画");
-  });
-
-  it.each([
-    {ok: false, blob: async () => new Blob(["GIF89a"], {type: "image/gif"})},
-    {ok: true, blob: async () => new Blob(["not an image"], {type: "text/html"})},
-  ])("does not upload a failed or non-image original response", async (response) => {
-    fetchImage.mockResolvedValue(response);
-    await new App(props).handlePaste(null, pasteEvent(`<img src="${source}">`));
-    expect(uploadAdaptor).not.toHaveBeenCalled();
-    expect(message.error).toHaveBeenCalled();
-  });
-});
-
 beforeEach(() => {
   jest.clearAllMocks();
   (pluginCenter as any).mermaid = false;
 });
-
-const flushPromises = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-const createMermaidPreview = (sources: string[]) => {
-  const preview = document.createElement("section");
-  const nodes = sources.map((source) => {
-    const node = document.createElement("pre");
-    node.className = "mermaid";
-    node.textContent = source;
-    preview.appendChild(node);
-    return node;
-  });
-  return {preview, nodes};
-};
-
-const setMermaidProps = (instance, content: string, documentUuid = "document-a") => {
-  (instance as any).props = {...props, content: {...props.content, content, documentUuid}};
-};
-
-const createMermaidRun = () =>
-  jest.fn(({nodes}) => {
-    nodes.forEach((node, index) => {
-      node.innerHTML = `<svg data-rendered-index="${index}">${node.textContent}</svg>`;
-      node.setAttribute("data-processed", "true");
-    });
-  });
 
 it("falls back to Rico's live ratio when preview headings have no markers", () => {
   const markdownEditor = {
@@ -562,7 +322,11 @@ it("does not synchronize when sync scrolling is disabled", () => {
     getScrollInfo: jest.fn(() => ({top: 450, height: 1000, clientHeight: 100})),
     scrollTo: jest.fn(),
   };
-  const instance = new App({...props, navbar: {...props.navbar, isSyncScroll: false}, content: {...props.content, markdownEditor}});
+  const instance = new App({
+    ...props,
+    navbar: {...props.navbar, isSyncScroll: false},
+    content: {...props.content, markdownEditor},
+  });
   instance.previewContainer = {scrollTop: 10, scrollHeight: 2100, clientHeight: 100} as HTMLDivElement;
 
   instance.handleEditorScroll();
@@ -582,6 +346,7 @@ const renderAppContent = (instance) => instance.render().props.children({default
 
 const findDocumentNavigatorButtonCount = (node) => {
   if (!node || typeof node !== "object") return 0;
+  if (node.type === StatusBar) return findDocumentNavigatorButtonCount(new StatusBar(node.props).render());
   const ownCount = node.props?.["aria-label"] === "文档导航" ? 1 : 0;
   const children = node.props?.children;
   if (Array.isArray(children)) {
@@ -615,257 +380,6 @@ it("adds the pinned class after the navigator callback", () => {
   instance.handleDocumentNavigatorPinnedChange(true);
 
   expect(renderAppContent(instance).props.className).toContain("nice-document-navigator-pinned");
-});
-
-it("resolves preview HTML with the navbar template number", () => {
-  const instance = new App({...props, navbar: {...props.navbar, templateNum: 3}});
-
-  instance.render();
-
-  expect(resolveThemeHtmlForTemplate).toHaveBeenCalledWith(3, "");
-});
-
-it("typesets math after the mathjax loader finishes", async () => {
-  const instance = new App(props);
-  instance.handleUpdateMathjax = jest.fn();
-  instance.initMermaid = jest.fn();
-  instance.setCustomImageHosting = jest.fn();
-  instance.loadCurrentUser = jest.fn();
-  instance.setEditorContent = jest.fn();
-
-  instance.componentDidMount();
-  await flushPromises();
-
-  expect(instance.handleUpdateMathjax).toHaveBeenCalled();
-});
-
-it("initializes editor Mermaid with the shared Neo config", async () => {
-  const instance = new App(props);
-
-  instance.initMermaid();
-  await flushPromises();
-
-  expect(PLAINLY_MERMAID_CONFIG).toEqual({
-    theme: "neo",
-    look: "neo",
-    startOnLoad: false,
-    securityLevel: "strict",
-    flowchart: {
-      htmlLabels: false,
-    },
-  });
-  expect(require("mermaid").default.initialize).toHaveBeenCalledWith(PLAINLY_MERMAID_CONFIG);
-  expect((pluginCenter as any).mermaid).toBe(true);
-});
-
-it("schedules Mermaid only for preview changes and renders it on blur", () => {
-  const instance = new App(props);
-  expect(mockDebounce).toHaveBeenCalledWith(instance.updateMermaid, 800, {leading: false, trailing: true});
-  const {preview, nodes: [node]} = createMermaidPreview(["graph TD"]);
-  const run = createMermaidRun();
-  instance.mermaid = {run};
-  instance.previewWrap = preview;
-  (pluginCenter as any).mermaid = true;
-
-  instance.componentDidUpdate();
-  expect(instance.handleUpdateMermaid).not.toHaveBeenCalled();
-
-  (instance as any).props = {...props, content: {...props.content, content: "```mermaid\ngraph TD\n```"}};
-  instance.componentDidUpdate();
-  (instance as any).props = {...props, content: {...props.content, content: "```mermaid\ngraph LR\n```"}};
-  instance.componentDidUpdate();
-  instance.componentDidUpdate();
-
-  expect(instance.handleUpdateMermaid).toHaveBeenCalledTimes(2);
-  expect(run).not.toHaveBeenCalled();
-
-  instance.handleBlur();
-
-  expect((instance.handleUpdateMermaid as any).flush).toHaveBeenCalledTimes(1);
-  expect(run).toHaveBeenCalledWith({nodes: [node]});
-});
-
-it("restores a cached Mermaid SVG immediately after the preview DOM is rebuilt", () => {
-  const instance = new App(props);
-  const run = createMermaidRun();
-  instance.mermaid = {run};
-  (pluginCenter as any).mermaid = true;
-  const source = "graph TD";
-  const first = createMermaidPreview([source]);
-  instance.previewWrap = first.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```");
-
-  instance.componentDidUpdate();
-  instance.handleBlur();
-  expect(instance.mermaidCache.size).toBe(1);
-
-  const rebuilt = createMermaidPreview([source]);
-  instance.previewWrap = rebuilt.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```\nordinary text");
-  instance.componentDidUpdate();
-
-  expect(rebuilt.nodes[0].innerHTML).toBe(first.nodes[0].innerHTML);
-  expect(rebuilt.nodes[0].getAttribute("data-processed")).toBe("true");
-  expect(instance.handleUpdateMermaid).toHaveBeenCalledTimes(1);
-  expect(run).toHaveBeenCalledTimes(1);
-});
-
-it("renders only the changed Mermaid node after restoring unchanged nodes", () => {
-  const instance = new App(props);
-  const run = createMermaidRun();
-  instance.mermaid = {run};
-  (pluginCenter as any).mermaid = true;
-  const first = createMermaidPreview(["graph TD", "graph LR"]);
-  instance.previewWrap = first.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```\n```mermaid\ngraph LR\n```");
-
-  instance.componentDidUpdate();
-  instance.handleBlur();
-
-  const rebuilt = createMermaidPreview(["graph TD", "graph BT"]);
-  instance.previewWrap = rebuilt.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```\n```mermaid\ngraph BT\n```");
-  instance.componentDidUpdate();
-
-  expect(rebuilt.nodes[0].getAttribute("data-processed")).toBe("true");
-  expect(rebuilt.nodes[1].getAttribute("data-processed")).toBe(null);
-  instance.handleBlur();
-
-  expect(run).toHaveBeenCalledTimes(2);
-  expect(run.mock.calls[1][0]).toEqual({nodes: [rebuilt.nodes[1]]});
-  expect(instance.mermaidCache.size).toBe(2);
-});
-
-it("does not reuse Mermaid cache entries across document UUIDs", () => {
-  const instance = new App(props);
-  const run = createMermaidRun();
-  instance.mermaid = {run};
-  (pluginCenter as any).mermaid = true;
-  const first = createMermaidPreview(["graph TD"]);
-  instance.previewWrap = first.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```", "document-a");
-
-  instance.componentDidUpdate();
-  instance.handleBlur();
-
-  const nextDocument = createMermaidPreview(["graph TD"]);
-  instance.previewWrap = nextDocument.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```", "document-b");
-  instance.componentDidUpdate();
-
-  expect(nextDocument.nodes[0].getAttribute("data-processed")).toBe(null);
-  expect(instance.handleUpdateMermaid).toHaveBeenCalledTimes(2);
-  instance.handleBlur();
-  expect(run).toHaveBeenCalledTimes(2);
-});
-
-it("keeps same-source Mermaid occurrences in separate cache entries", () => {
-  const instance = new App(props);
-  const run = createMermaidRun();
-  instance.mermaid = {run};
-  (pluginCenter as any).mermaid = true;
-  const first = createMermaidPreview(["graph TD", "graph TD"]);
-  instance.previewWrap = first.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```\n```mermaid\ngraph TD\n```");
-
-  instance.componentDidUpdate();
-  instance.handleBlur();
-  expect(instance.mermaidCache.size).toBe(2);
-
-  const rebuilt = createMermaidPreview(["graph TD", "graph TD"]);
-  instance.previewWrap = rebuilt.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```\n```mermaid\ngraph TD\n```\nordinary text");
-  instance.componentDidUpdate();
-
-  expect(rebuilt.nodes[0].innerHTML).toContain('data-rendered-index="0"');
-  expect(rebuilt.nodes[1].innerHTML).toContain('data-rendered-index="1"');
-  expect(instance.handleUpdateMermaid).toHaveBeenCalledTimes(1);
-});
-
-it("prunes Mermaid cache entries while ordinary text changes rebuild the preview", () => {
-  const instance = new App(props);
-  const run = createMermaidRun();
-  instance.mermaid = {run};
-  (pluginCenter as any).mermaid = true;
-  const first = createMermaidPreview(["graph TD"]);
-  instance.previewWrap = first.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```");
-
-  instance.componentDidUpdate();
-  instance.handleBlur();
-
-  ["first", "second", "third"].forEach((text) => {
-    const rebuilt = createMermaidPreview(["graph TD"]);
-    instance.previewWrap = rebuilt.preview;
-    setMermaidProps(instance, `\`\`\`mermaid\ngraph TD\n\`\`\`\n${text}`);
-    instance.componentDidUpdate();
-    expect(instance.mermaidCache.size).toBe(1);
-    expect(rebuilt.nodes[0].getAttribute("data-processed")).toBe("true");
-  });
-
-  expect(run).toHaveBeenCalledTimes(1);
-});
-
-it("does not cache a stale Mermaid Promise after switching documents", async () => {
-  const instance = new App(props);
-  let resolveRun;
-  const run = jest.fn(({nodes}) => {
-    nodes.forEach((node) => {
-      node.innerHTML = "<svg />";
-      node.setAttribute("data-processed", "true");
-    });
-    return new Promise((resolve) => {
-      resolveRun = resolve;
-    });
-  });
-  instance.mermaid = {run};
-  (pluginCenter as any).mermaid = true;
-  const first = createMermaidPreview(["graph TD"]);
-  instance.previewWrap = first.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```", "document-a");
-
-  instance.componentDidUpdate();
-  instance.handleBlur();
-
-  const nextDocument = createMermaidPreview(["graph TD"]);
-  instance.previewWrap = nextDocument.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```", "document-b");
-  instance.componentDidUpdate();
-  resolveRun();
-  await Promise.resolve();
-  await Promise.resolve();
-
-  expect(instance.mermaidCacheDocumentKey).toBe("document-b");
-  expect(instance.mermaidCache.size).toBe(0);
-});
-
-it("captures Mermaid Promise rejections", async () => {
-  const instance = new App(props);
-  const error = new Error("render failed");
-  const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
-  instance.mermaid = {run: jest.fn(() => Promise.reject(error))};
-  (pluginCenter as any).mermaid = true;
-  const preview = createMermaidPreview(["graph TD"]);
-  instance.previewWrap = preview.preview;
-  setMermaidProps(instance, "```mermaid\ngraph TD\n```");
-
-  instance.componentDidUpdate();
-  instance.handleBlur();
-  await Promise.resolve();
-  await Promise.resolve();
-
-  expect(consoleError).toHaveBeenCalledWith(error);
-  consoleError.mockRestore();
-});
-
-it("cancels the pending Mermaid render when unmounted", () => {
-  const instance = new App(props);
-  instance.mermaidCache.set("cache-key", "<svg />");
-
-  instance.componentWillUnmount();
-
-  expect((instance.handleUpdateMermaid as any).cancel).toHaveBeenCalledTimes(1);
-  expect(instance.mermaidCache.size).toBe(0);
 });
 
 it("syncs local data after restoring an existing session", async () => {
@@ -1020,4 +534,24 @@ it("continues syncing categories and documents when image hosting config sync fa
     },
   ]);
   consoleError.mockRestore();
+});
+
+it("connects extracted editor and preview components for scroll and blur", () => {
+  const instance = new App(props);
+  const root = renderAppContent(instance);
+  const workspace = root.props.children[1];
+  const editor = workspace.props.children.find((child) => child?.type === MarkdownEditor);
+  const preview = workspace.props.children.find((child) => child?.type === MarkdownPreview);
+  const flushMermaid = jest.fn();
+  (instance.previewRef as any).current = {flushMermaid};
+  editor.props.onBlur();
+  expect(flushMermaid).toHaveBeenCalledTimes(1);
+  expect(editor.props.onScroll).toBe(instance.handleEditorScroll);
+  expect(preview.props.onScroll).toBe(instance.handlePreviewScroll);
+  const container = document.createElement("div");
+  const section = document.createElement("section");
+  preview.props.onContainerRef(container);
+  preview.props.onRootRef(section);
+  expect(instance.previewContainer).toBe(container);
+  expect(instance.previewWrap).toBe(section);
 });

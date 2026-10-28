@@ -1,70 +1,38 @@
 import React, {Component} from "react";
-import CodeMirror from "@uiw/react-codemirror";
-import "codemirror/addon/search/searchcursor";
-import "codemirror/keymap/sublime";
-import "codemirror/mode/markdown/markdown";
 import "antd/dist/antd.css";
 import {observer, inject} from "mobx-react";
 import classnames from "classnames";
-import debounce from "lodash.debounce";
-import throttle from "lodash.throttle";
 
 import Dialog from "./layout/Dialog";
+import MarkdownEditor from "./layout/MarkdownEditor";
+import MarkdownPreview from "./layout/MarkdownPreview";
+import StatusBar from "./layout/StatusBar";
+import {syncLocalToRemote} from "./utils/syncLocalToRemote";
 import Navbar from "./layout/Navbar";
-import Sidebar from "./layout/Sidebar";
 import StyleEditor from "./layout/StyleEditor";
 import EditorMenu from "./layout/EditorMenu";
-import SearchBox from "./component/SearchBox";
 
 import "./App.css";
 import "./utils/mdMirror.css";
 
-import {
-  LAYOUT_ID,
-  BOX_ID,
-  IMAGE_HOSTING_NAMES,
-  IMAGE_HOSTING_TYPE,
-  ALIOSS_IMAGE_HOSTING,
-  QINIUOSS_IMAGE_HOSTING,
-  R2_IMAGE_HOSTING,
-  SM_MS_TOKEN,
-  MJX_DATA_FORMULA,
-  MJX_DATA_FORMULA_TYPE,
-  DEFAULT_CATEGORY_NAME,
-  DEFAULT_CATEGORY_UUID,
-} from "./utils/constant";
-import {countVisibleChars, markdownParser, markdownParserWechat, updateMathjax} from "./utils/helper";
-import pluginCenter from "./utils/pluginCenter";
+import {IMAGE_HOSTING_NAMES, IMAGE_HOSTING_TYPE} from "./utils/constant";
 import appContext, {ImageHostingPreset} from "./utils/appContext";
-import {uploadAdaptor} from "./utils/imageHosting";
-import bindHotkeys, {betterTab, rightClick} from "./utils/hotkey";
 import AuthModal from "./component/Auth/AuthModal";
 import DocumentNavigator from "./component/DocumentNavigator";
 import {getConfigSync, setConfigSync} from "./utils/configStore";
-import {Button, Tooltip, message} from "antd";
-import {FolderOpenOutlined} from "@ant-design/icons";
 import {BrowserDataStore} from "./data/store/browser/BrowserDataStore";
-import {getDataStore} from "./data/store/index";
 import {markIndexDirty, scheduleIndexRebuild} from "./search";
-import {resolveThemeHtmlForTemplate} from "./theme";
 import {
   buildLiveHeadingAnchors,
   mapEditorToPreviewByAnchors,
   mapPreviewToEditorByAnchors,
   mapScrollByRatio,
-  renderMarkdownWithHeadingAnchors,
 } from "./utils/syncScroll";
-import {PLAINLY_MERMAID_CONFIG} from "./utils/mermaidConfig";
 
 const SESSION_FLAG_COOKIE = "plainly_session";
 const DATA_STORE_USER_ID_KEY = "__DATA_STORE_USER_ID__";
 const CURRENT_USER_ID_KEY = "__CURRENT_USER_ID__";
 const DATA_STORE_MODE_KEY = "__DATA_STORE_MODE__";
-const UNSAVED_MERMAID_CACHE_DOCUMENT_KEY = "__plainly_unsaved_mermaid_document__";
-
-type MermaidNode = HTMLElement & {
-  __plainlyMermaidCacheKey?: string;
-};
 
 type RuntimeUser = {
   id: number;
@@ -90,11 +58,6 @@ type AppState = {
   documentNavigatorPinned: boolean;
 };
 
-type DebouncedMermaidUpdate = (() => void) & {
-  cancel?: () => void;
-  flush?: () => void;
-};
-
 @inject("content")
 @inject("navbar")
 @inject("view")
@@ -102,8 +65,6 @@ type DebouncedMermaidUpdate = (() => void) & {
 @inject("imageHosting")
 @observer
 class App extends Component<AppProps, AppState> {
-  focus = false;
-
   syncScrollLock: "editor" | "preview" | null = null;
 
   syncScrollReleaseFrame: number | null = null;
@@ -112,17 +73,7 @@ class App extends Component<AppProps, AppState> {
 
   previewWrap: HTMLElement | null = null;
 
-  mermaid: any = null;
-
-  mermaidRenderSignature: string;
-
-  mermaidCache = new Map<string, string>();
-
-  mermaidCacheDocumentKey: string;
-
-  handleUpdateMathjax: () => void;
-
-  handleUpdateMermaid: DebouncedMermaidUpdate;
+  previewRef = React.createRef<MarkdownPreview>();
 
   isRemoteMode: boolean;
 
@@ -136,10 +87,6 @@ class App extends Component<AppProps, AppState> {
       documentNavigatorOpen: false,
       documentNavigatorPinned: false,
     };
-    this.handleUpdateMathjax = throttle(updateMathjax, 1500);
-    this.mermaidCacheDocumentKey = this.getMermaidDocumentKey();
-    this.mermaidRenderSignature = this.getMermaidRenderSignature();
-    this.handleUpdateMermaid = debounce(this.updateMermaid, 800, {leading: false, trailing: true});
     this.isRemoteMode = this.resolveDataStoreMode() === "remote";
     this.apiBase =
       (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) ||
@@ -152,64 +99,9 @@ class App extends Component<AppProps, AppState> {
     document.addEventListener("webkitfullscreenchange", this.solveScreenChange);
     document.addEventListener("mozfullscreenchange", this.solveScreenChange);
     document.addEventListener("MSFullscreenChange", this.solveScreenChange);
-    try {
-      const windowAny = window as any;
-      windowAny.MathJax = {
-        tex: {
-          inlineMath: [["$", "$"]],
-          displayMath: [["$$", "$$"]],
-          tags: "ams",
-        },
-        svg: {
-          fontCache: "none",
-        },
-        options: {
-          renderActions: {
-            addMenu: [0, "", ""],
-            addContainer: [
-              190,
-              (doc) => {
-                for (const math of doc.math) {
-                  this.addContainer(math, doc);
-                }
-              },
-              this.addContainer,
-            ],
-          },
-        },
-      };
-      import("mathjax/es5/tex-svg-full")
-        .then(() => {
-          (pluginCenter as any).mathjax = true;
-          this.handleUpdateMathjax();
-        })
-        .catch((error) => {
-          console.log(error);
-        });
-    } catch (e) {
-      console.log(e);
-    }
-    this.initMermaid();
     this.setEditorContent();
     this.setCustomImageHosting();
     this.loadCurrentUser();
-  }
-
-  componentDidUpdate() {
-    this.syncMermaidCacheScope();
-    if (pluginCenter.mathjax) {
-      this.handleUpdateMathjax();
-    }
-    if (pluginCenter.mermaid) {
-      const signature = this.getMermaidRenderSignature();
-      if (signature !== this.mermaidRenderSignature) {
-        this.mermaidRenderSignature = signature;
-        const misses = this.restoreMermaidCache();
-        if (misses.length) {
-          this.handleUpdateMermaid();
-        }
-      }
-    }
   }
 
   componentWillUnmount() {
@@ -218,8 +110,6 @@ class App extends Component<AppProps, AppState> {
     document.removeEventListener("mozfullscreenchange", this.solveScreenChange);
     document.removeEventListener("MSFullscreenChange", this.solveScreenChange);
     if (this.syncScrollReleaseFrame !== null) this.cancelFrame(this.syncScrollReleaseFrame);
-    this.handleUpdateMermaid.cancel?.();
-    this.mermaidCache.clear();
   }
 
   setRuntimeUser = (user) => {
@@ -248,112 +138,7 @@ class App extends Component<AppProps, AppState> {
 
   syncLocalToRemote = async (user) => {
     if (!this.isRemoteMode || !user || !user.id) return;
-    try {
-      const localStore = new BrowserDataStore(0);
-      await localStore.init();
-      const remoteStore = getDataStore(Number(user.id) || 0);
-      const configKeysToSync = [
-        ALIOSS_IMAGE_HOSTING,
-        QINIUOSS_IMAGE_HOSTING,
-        R2_IMAGE_HOSTING,
-        SM_MS_TOKEN,
-        IMAGE_HOSTING_TYPE,
-      ];
-
-      await Promise.all(
-        configKeysToSync.map(async (key) => {
-          try {
-            const value = await localStore.getConfig(key, null);
-            if (value === null || value === undefined || value === "") {
-              return;
-            }
-            await remoteStore.setConfig(key, value);
-          } catch (e) {
-            console.error(`同步配置失败: ${key}`, e);
-          }
-        }),
-      );
-
-      const localCategories = await localStore.listCategories();
-      const categoryUuidMap = new Map();
-      const categoryItems = localCategories
-        .filter((category) => category && category.category_id !== DEFAULT_CATEGORY_UUID)
-        .map((category) => ({
-          name: category.name,
-          category_id: category.category_id,
-          source: "local" as const,
-          version: category.version ?? 1,
-        }));
-      if (categoryItems.length > 0) {
-        try {
-          const result = await remoteStore.batchCreateCategories(categoryItems as any);
-          const items = (result && result.items) || [];
-          await Promise.all(
-            items.map(async (item) => {
-              const clientId = item?.client_id;
-              const created = item?.category;
-              if (!clientId || !created || !created.category_id) return;
-              categoryUuidMap.set(clientId, created.category_id);
-              if (created.category_id !== clientId) {
-                await localStore.remapCategoryUuid(clientId, created.category_id);
-                if (this.props.content.documentCategoryUuid === clientId) {
-                  this.props.content.setDocumentCategory(created.category_id, created.name || DEFAULT_CATEGORY_NAME);
-                }
-              }
-            }),
-          );
-        } catch (e) {
-          console.error(e);
-        }
-      }
-
-      const localDocuments = await localStore.listAllDocuments();
-      const documentItems = await Promise.all(
-        localDocuments
-          .filter((doc) => doc && doc.document_id)
-          .map(async (doc) => {
-            const content = await localStore.getDocumentContent(doc.document_id);
-            const mappedCategoryUuid = categoryUuidMap.get(doc.category_id) || doc.category_id || DEFAULT_CATEGORY_UUID;
-            return {
-              meta: {
-                document_id: doc.document_id,
-                name: doc.name,
-                category_id: mappedCategoryUuid,
-                createdAt: doc.createdAt,
-                updatedAt: doc.updatedAt,
-                charCount: doc.charCount,
-                source: "local" as const,
-                version: doc.version ?? 1,
-              },
-              content: content || "",
-            };
-          }),
-      );
-      const filteredDocs = documentItems.filter((item) => item && item.meta && item.meta.document_id);
-      if (filteredDocs.length > 0) {
-        try {
-          const result = await remoteStore.batchCreateDocuments(filteredDocs as any);
-          const items = (result && result.items) || [];
-          await Promise.all(
-            items.map(async (item) => {
-              const clientId = item?.client_id;
-              const created = item?.document;
-              if (!clientId || !created || !created.document_id) return;
-              if (created.document_id !== clientId) {
-                await localStore.remapDocumentUuid(clientId, created.document_id);
-                if (this.props.content.documentUuid === clientId) {
-                  this.props.content.setDocumentUuid(created.document_id);
-                }
-              }
-            }),
-          );
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
+    await syncLocalToRemote(user, this.props.content);
   };
 
   clearRemoteHistory = async (userId) => {
@@ -591,47 +376,23 @@ class App extends Component<AppProps, AppState> {
     };
   };
 
-  initMermaid = () => {
-    import("mermaid")
-      .then((module) => {
-        const mermaid: any = module.default || module;
-        this.mermaid = mermaid;
-        mermaid.initialize(PLAINLY_MERMAID_CONFIG);
-        (pluginCenter as any).mermaid = true;
-        this.syncMermaidCacheScope();
-        this.mermaidRenderSignature = this.getMermaidRenderSignature();
-        if (this.restoreMermaidCache().length) {
-          this.handleUpdateMermaid();
-        }
-      })
-      .catch((error) => {
-        console.log(error);
-      });
-  };
-
   solveScreenChange = () => {
     const {isImmersiveEditing} = this.props.view;
     this.props.view.setImmersiveEditing(!isImmersiveEditing);
-  };
-
-  getInstance = (instance: any) => {
-    if (instance) {
-      this.props.content.setMarkdownEditor(instance.editor);
-    }
   };
 
   requestFrame = (callback: FrameRequestCallback): number => {
     if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
       return window.requestAnimationFrame(callback);
     }
-    return setTimeout(() => callback(Date.now()), 0) as unknown as number;
+    return (setTimeout(() => callback(Date.now()), 0) as unknown) as number;
   };
 
   cancelFrame = (frame: number) => {
     if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
       window.cancelAnimationFrame(frame);
     } else {
-      clearTimeout(frame as unknown as ReturnType<typeof setTimeout>);
+      clearTimeout((frame as unknown) as ReturnType<typeof setTimeout>);
     }
   };
 
@@ -649,15 +410,21 @@ class App extends Component<AppProps, AppState> {
     if (!markdownEditor || !this.previewContainer) return;
     const scrollInfo = markdownEditor.getScrollInfo();
     const anchors = this.previewWrap
-      ? buildLiveHeadingAnchors({markdownEditor, previewContainer: this.previewContainer, previewRoot: this.previewWrap})
+      ? buildLiveHeadingAnchors({
+          markdownEditor,
+          previewContainer: this.previewContainer,
+          previewRoot: this.previewWrap,
+        })
       : null;
-    const targetPreviewTop = mapEditorToPreviewByAnchors(anchors, scrollInfo.top) ?? mapScrollByRatio(
-      scrollInfo.top,
-      scrollInfo.height,
-      scrollInfo.clientHeight,
-      this.previewContainer.scrollHeight,
-      this.previewContainer.clientHeight,
-    );
+    const targetPreviewTop =
+      mapEditorToPreviewByAnchors(anchors, scrollInfo.top) ??
+      mapScrollByRatio(
+        scrollInfo.top,
+        scrollInfo.height,
+        scrollInfo.clientHeight,
+        this.previewContainer.scrollHeight,
+        this.previewContainer.clientHeight,
+      );
     this.syncScrollLock = "editor";
     this.previewContainer.scrollTop = targetPreviewTop;
     this.releaseScrollSyncLock("editor");
@@ -669,462 +436,111 @@ class App extends Component<AppProps, AppState> {
     if (!markdownEditor || !this.previewContainer) return;
     const scrollInfo = markdownEditor.getScrollInfo();
     const anchors = this.previewWrap
-      ? buildLiveHeadingAnchors({markdownEditor, previewContainer: this.previewContainer, previewRoot: this.previewWrap})
+      ? buildLiveHeadingAnchors({
+          markdownEditor,
+          previewContainer: this.previewContainer,
+          previewRoot: this.previewWrap,
+        })
       : null;
-    const targetEditorTop = mapPreviewToEditorByAnchors(anchors, this.previewContainer.scrollTop) ?? mapScrollByRatio(
-      this.previewContainer.scrollTop,
-      this.previewContainer.scrollHeight,
-      this.previewContainer.clientHeight,
-      scrollInfo.height,
-      scrollInfo.clientHeight,
-    );
+    const targetEditorTop =
+      mapPreviewToEditorByAnchors(anchors, this.previewContainer.scrollTop) ??
+      mapScrollByRatio(
+        this.previewContainer.scrollTop,
+        this.previewContainer.scrollHeight,
+        this.previewContainer.clientHeight,
+        scrollInfo.height,
+        scrollInfo.clientHeight,
+      );
     this.syncScrollLock = "preview";
     markdownEditor.scrollTo(null, targetEditorTop);
     this.releaseScrollSyncLock("preview");
   };
 
-  handleChange = (editor: any) => {
-    if (this.focus) {
-      const content = editor.getValue();
-      this.props.content.setContent(content);
-      this.props.onTextChange && this.props.onTextChange(content);
-    }
+  handleBlur = () => this.previewRef.current?.flushMermaid();
+
+  setPreviewContainer = (node: HTMLDivElement | null) => {
+    this.previewContainer = node;
   };
 
-  handleFocus = () => {
-    this.focus = true;
+  setPreviewRoot = (node: HTMLElement | null) => {
+    this.previewWrap = node;
   };
-
-  handleBlur = () => {
-    this.focus = false;
-    this.handleUpdateMermaid.flush?.();
-  };
-
-  getMermaidRenderSignature = () =>
-    [
-      this.getMermaidDocumentKey(),
-      this.props.content.content || "",
-      this.props.navbar.templateNum,
-      this.props.navbar.codeNum,
-    ].join("\u0000");
-
-  getMermaidDocumentKey = () => this.props.content.documentUuid || UNSAVED_MERMAID_CACHE_DOCUMENT_KEY;
-
-  syncMermaidCacheScope = () => {
-    const documentKey = this.getMermaidDocumentKey();
-    if (documentKey !== this.mermaidCacheDocumentKey) {
-      this.mermaidCache.clear();
-      this.mermaidCacheDocumentKey = documentKey;
-    }
-    return documentKey;
-  };
-
-  getMermaidCacheKey = (source: string, occurrence: number) => JSON.stringify([source, occurrence]);
-
-  getMermaidSourceFromCacheKey = (key: string) => {
-    try {
-      const [source] = JSON.parse(key);
-      return typeof source === "string" ? source : null;
-    } catch (_error) {
-      return null;
-    }
-  };
-
-  restoreMermaidCache = (): MermaidNode[] => {
-    this.syncMermaidCacheScope();
-    if (!this.previewWrap) {
-      return [];
-    }
-    const occurrences = new Map<string, number>();
-    const presentKeys = new Set<string>();
-    const misses: MermaidNode[] = [];
-    const nodes = Array.from(this.previewWrap.querySelectorAll(".mermaid")) as MermaidNode[];
-
-    nodes.forEach((node) => {
-      if (node.getAttribute("data-processed")) {
-        const cacheKey = node.__plainlyMermaidCacheKey;
-        if (cacheKey) {
-          presentKeys.add(cacheKey);
-          const source = this.getMermaidSourceFromCacheKey(cacheKey);
-          if (source !== null) {
-            occurrences.set(source, (occurrences.get(source) || 0) + 1);
-          }
-        }
-        return;
-      }
-
-      const source = node.textContent.trim();
-      const occurrence = occurrences.get(source) || 0;
-      occurrences.set(source, occurrence + 1);
-      const cacheKey = this.getMermaidCacheKey(source, occurrence);
-      node.__plainlyMermaidCacheKey = cacheKey;
-      presentKeys.add(cacheKey);
-      const cachedSvg = this.mermaidCache.get(cacheKey);
-      if (cachedSvg === undefined) {
-        misses.push(node);
-        return;
-      }
-      node.innerHTML = cachedSvg;
-      node.setAttribute("data-processed", "true");
-    });
-
-    this.mermaidCache.forEach((_svg, cacheKey) => {
-      if (!presentKeys.has(cacheKey)) {
-        this.mermaidCache.delete(cacheKey);
-      }
-    });
-
-    return misses;
-  };
-
-  handleDrop = (_instance: any, e: any) => {
-    // e.preventDefault();
-    // console.log(e.dataTransfer.files[0]);
-    if (!(e.dataTransfer && e.dataTransfer.files)) {
-      return;
-    }
-    for (let i = 0; i < e.dataTransfer.files.length; i++) {
-      // console.log(e.dataTransfer.files[i]);
-      uploadAdaptor({file: e.dataTransfer.files[i], content: this.props.content});
-    }
-  };
-
-  handlePaste = async (_instance: any, e: any) => {
-    const clipboard = e.clipboardData;
-    if (!clipboard) {
-      return;
-    }
-    const files = Array.from(clipboard.files || []) as File[];
-    const html = clipboard.getData?.("text/html") || "";
-    // 网页复制的图片可能只提供 PNG 静态副本；从 HTML 中读取原图以保留动画。
-    if (html && (files.length === 0 || (files.length === 1 && files[0].type === "image/png"))) {
-      const doc = new DOMParser().parseFromString(html, "text/html");
-      const images = doc.querySelectorAll("img");
-      const source = images.length === 1 ? images[0].getAttribute("src") || "" : "";
-      if (!doc.body.textContent.trim() && /^https?:\/\//i.test(source)) {
-        e.preventDefault();
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 30000);
-        let originalFile: File;
-        let isStaticSource = false;
-        try {
-          const url = new URL(source);
-          // 仅明确的静态图片地址允许使用剪贴板副本；GIF、WebP 和无扩展名地址仍需原图。
-          isStaticSource = /\.(png|jpe?g|bmp)$/i.test(url.pathname);
-          // GitHub raw 中转不允许跨域读取，直接请求其公开原图地址。
-          if (url.hostname === "github.com" && /^\/[^/]+\/[^/]+\/raw\//.test(url.pathname)) {
-            url.hostname = "raw.githubusercontent.com";
-            url.pathname = url.pathname.replace(/^(\/[^/]+\/[^/]+)\/raw\//, "$1/");
-          }
-          const readImage = async (imageUrl: URL) => {
-            const response = await fetch(imageUrl.href, {credentials: "omit", signal: controller.signal});
-            if (!response.ok) {
-              throw new Error("读取原图失败");
-            }
-            const image = await response.blob();
-            if (!image.type.startsWith("image/")) {
-              throw new Error("原图响应不是图片");
-            }
-            return image;
-          };
-          let blob: Blob;
-          try {
-            blob = await readImage(url);
-          } catch (error) {
-            if (url.hostname !== "raw.githubusercontent.com" || controller.signal.aborted) {
-              throw error;
-            }
-            // Git LFS 的 raw 响应是文本指针，实际图片由 media 地址提供。
-            const mediaUrl = new URL(url.href);
-            mediaUrl.hostname = "media.githubusercontent.com";
-            mediaUrl.pathname = `/media${url.pathname}`;
-            blob = await readImage(mediaUrl);
-          }
-          const name = url.pathname.split("/").pop() || "image";
-          const extension = blob.type.split("/")[1].replace("jpeg", "jpg");
-          originalFile = new File([blob], `${name.replace(/\.[^.]+$/, "")}.${extension}`, {type: blob.type});
-        } catch (error) {
-          if (isStaticSource && files.length === 1) {
-            [originalFile] = files;
-          } else {
-            message.error(`无法读取网页原图，请将图片另存为文件后上传${isStaticSource ? "" : "，以保留动画"}`);
-            return;
-          }
-        } finally {
-          clearTimeout(timer);
-        }
-        uploadAdaptor({file: originalFile, content: this.props.content});
-        return;
-      }
-    }
-    for (const file of files) {
-      uploadAdaptor({file, content: this.props.content});
-    }
-  };
-
-  updateMermaid = () => {
-    if (!this.mermaid || !this.previewWrap) {
-      return;
-    }
-    const documentKey = this.syncMermaidCacheScope();
-    const nodes = this.restoreMermaidCache().filter(
-      (node) => !node.getAttribute("data-processed"),
-    );
-    if (!nodes.length) {
-      return;
-    }
-    const cacheRenderedNodes = () => {
-      if (this.mermaidCacheDocumentKey !== documentKey || this.getMermaidDocumentKey() !== documentKey) {
-        return;
-      }
-      nodes.forEach((node) => {
-        const cacheKey = node.__plainlyMermaidCacheKey;
-        if (cacheKey && node.getAttribute("data-processed")) {
-          this.mermaidCache.set(cacheKey, node.innerHTML);
-        }
-      });
-    };
-    try {
-      const result =
-        typeof this.mermaid.run === "function"
-          ? this.mermaid.run({nodes})
-          : undefined;
-      if (result && typeof result.then === "function") {
-        Promise.resolve(result).then(cacheRenderedNodes).catch(console.error);
-      } else {
-        cacheRenderedNodes();
-      }
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  addContainer(math, doc) {
-    const tag = "span";
-    const spanClass = math.display ? "span-block-equation" : "span-inline-equation";
-    const cls = math.display ? "block-equation" : "inline-equation";
-    math.typesetRoot.className = cls;
-    math.typesetRoot.setAttribute(MJX_DATA_FORMULA, math.math);
-    math.typesetRoot.setAttribute(MJX_DATA_FORMULA_TYPE, cls);
-    math.typesetRoot = doc.adaptor.node(tag, {class: spanClass, style: "cursor:pointer"}, [math.typesetRoot]);
-  }
 
   render() {
-    const {codeNum, previewType, templateNum} = this.props.navbar;
-    const {isEditAreaOpen, isPreviewAreaOpen, isStyleEditorOpen, isImmersiveEditing} = this.props.view;
-    const {isSearchOpen} = this.props.dialog;
-    const {content, documentName, documentUpdatedAt} = this.props.content;
-    const {documentNavigatorOpen, documentNavigatorPinned} = this.state;
-    const categoryName = this.props.content.documentCategoryName || DEFAULT_CATEGORY_NAME;
-    const markdownLength = countVisibleChars(content || "");
-    const lastSavedText = documentUpdatedAt ? new Date(documentUpdatedAt).toLocaleString() : "未保存";
-
-    const activeParser = codeNum === 0 ? markdownParserWechat : markdownParser;
-    const rawHtml = renderMarkdownWithHeadingAnchors(content, activeParser);
-    const parseHtml = resolveThemeHtmlForTemplate(templateNum, rawHtml);
-
-    const mdEditingClass = classnames({
-      "nice-md-editing": !isImmersiveEditing,
-      "nice-md-editing-immersive": isImmersiveEditing,
-      "nice-md-editing-hide": !isEditAreaOpen,
-    });
-
-    const styleEditingClass = classnames({
-      "nice-style-editing": true,
-      "nice-style-editing-hide": isImmersiveEditing,
-    });
-
-    const richTextClass = classnames({
-      "nice-marked-text": true,
-      "nice-marked-text-pc": previewType === "pc",
-      "nice-marked-text-hide": isImmersiveEditing || !isPreviewAreaOpen,
-    });
-
-    const richTextBoxClass = classnames({
-      "nice-wx-box": true,
-      "nice-wx-box-pc": previewType === "pc",
-    });
-
+    const {content, navbar, view, dialog, onTextChange} = this.props;
+    const {isStyleEditorOpen, isImmersiveEditing} = view;
+    const {documentNavigatorOpen, documentNavigatorPinned, currentUser} = this.state;
+    const styleEditingClass = classnames({"nice-style-editing": true, "nice-style-editing-hide": isImmersiveEditing});
     const textContainerClass = classnames({
       "nice-text-container": !isImmersiveEditing,
       "nice-text-container-immersive": isImmersiveEditing,
     });
-
-    const statusBarClass = classnames({
-      "nice-status-bar": true,
-      "nice-status-bar-hide": isImmersiveEditing,
-    });
-
     const appClass = classnames({
       App: true,
       "nice-document-navigator-pinned": documentNavigatorOpen && documentNavigatorPinned,
     });
-
-    const documentNavigatorButton = (
-      <Tooltip title="文档导航">
-        <Button
-          type="text"
-          size="small"
-          className="nice-document-navigator-trigger"
-          icon={<FolderOpenOutlined />}
-          onClick={this.handleDocumentNavigatorOpen}
-          aria-label="文档导航"
-        />
-      </Tooltip>
-    );
-
-    const documentNavigatorUserId = this.isRemoteMode && this.state.currentUser ? this.state.currentUser.id : 0;
-
+    const documentNavigatorUserId = this.isRemoteMode && currentUser ? currentUser.id : 0;
     return (
       <appContext.Consumer>
-        {(ctx) => {
-          const defaultTitle = ctx?.defaultTitle || "";
-          return (
-            <div className={appClass}>
-              <Navbar title={defaultTitle} />
-              <div className={textContainerClass}>
-                <div id="nice-md-editor" className={mdEditingClass}>
-                  {isSearchOpen && <SearchBox />}
-                  <CodeMirror
-                    value={this.props.content.content}
-                    options={{
-                      theme: "md-mirror",
-                      keyMap: "sublime",
-                      mode: "text/x-markdown",
-                      lineWrapping: true,
-                      lineNumbers: false,
-                      extraKeys: {
-                        ...bindHotkeys(this.props.content, this.props.dialog),
-                        Tab: betterTab,
-                        RightClick: rightClick,
-                      },
-                    }}
-                    onChange={this.handleChange}
-                    onScroll={this.handleEditorScroll}
-                    onFocus={this.handleFocus}
-                    onBlur={this.handleBlur}
-                    onDrop={this.handleDrop}
-                    onPaste={this.handlePaste}
-                    ref={this.getInstance}
-                  />
-                </div>
-                <div id="nice-rich-text" className={richTextClass}>
-                  <Sidebar />
-                  <div
-                    id={BOX_ID}
-                    className={richTextBoxClass}
-                    onScroll={this.handlePreviewScroll}
-                    ref={(node) => {
-                      this.previewContainer = node;
-                    }}
-                  >
-                    <section
-                      id={LAYOUT_ID}
-                      data-tool="mdnice编辑器"
-                      data-website="https://mdnice.disign.me"
-                      dangerouslySetInnerHTML={{
-                        __html: parseHtml,
-                      }}
-                      ref={(node) => {
-                        this.previewWrap = node;
-                      }}
-                    />
-                  </div>
-                </div>
-
-                {isStyleEditorOpen && (
-                  <div id="nice-style-editor" className={styleEditingClass}>
-                    <StyleEditor />
-                  </div>
-                )}
-
-                <Dialog />
-                <EditorMenu />
-              </div>
-              <div className={statusBarClass}>
-                {this.isRemoteMode ? (
-                  <div className="nice-status-item nice-status-item-main">
-                    {documentNavigatorButton}
-                    <Button type="link" size="small" onClick={this.handleAuthOpen}>
-                      {this.state.currentUser
-                        ? `已登录：${this.state.currentUser.username || this.state.currentUser.account}`
-                        : "未登录"}
-                    </Button>
-                    <b>归属目录: </b>
-                    <button
-                      type="button"
-                      className="nice-status-category-trigger"
-                      onClick={this.handleCategoryManageOpen}
-                      title="打开目录管理"
-                    >
-                      {categoryName}
-                    </button>
-                    &nbsp;
-                    <b>文件名: </b>
-                    <button
-                      type="button"
-                      className="nice-status-category-trigger"
-                      onClick={this.handleDocumentSettingsOpen}
-                      title="打开文档设置"
-                    >
-                      {documentName || "未命名.md"}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="nice-status-item nice-status-item-main">
-                    {documentNavigatorButton}
-                    <b>离线模式</b>&nbsp;
-                    <b>归属目录: </b>
-                    <button
-                      type="button"
-                      className="nice-status-category-trigger"
-                      onClick={this.handleCategoryManageOpen}
-                      title="打开目录管理"
-                    >
-                      {categoryName}
-                    </button>
-                    &nbsp;
-                    <b>文件名: </b>
-                    <button
-                      type="button"
-                      className="nice-status-category-trigger"
-                      onClick={this.handleDocumentSettingsOpen}
-                      title="打开文档设置"
-                    >
-                      {documentName || "未命名.md"}
-                    </button>
-                  </div>
-                )}
-                <div className="nice-status-item">
-                  <b>最后保存时间: </b>
-                  {lastSavedText}
-                </div>
-                <div className="nice-status-item">
-                  <b>字符数:</b>
-                  {markdownLength}
-                </div>
-              </div>
-              <AuthModal
-                visible={this.state.authVisible}
-                onClose={this.handleAuthClose}
-                currentUser={this.state.currentUser}
-                onLogin={this.handleLogin}
-                onRegister={this.handleRegister}
-                onUpdatePassword={this.handleUpdatePassword}
-                onLogout={this.handleLogout}
+        {(ctx) => (
+          <div className={appClass}>
+            <Navbar title={ctx?.defaultTitle || ""} />
+            <div className={textContainerClass}>
+              <MarkdownEditor
+                content={content}
+                dialog={dialog}
+                view={view}
+                onTextChange={onTextChange}
+                onScroll={this.handleEditorScroll}
+                onBlur={this.handleBlur}
               />
-              <DocumentNavigator
-                open={documentNavigatorOpen}
-                pinned={documentNavigatorPinned}
-                userId={documentNavigatorUserId}
-                isRemoteMode={this.isRemoteMode}
-                content={this.props.content}
-                onClose={this.handleDocumentNavigatorClose}
-                onPinnedChange={this.handleDocumentNavigatorPinnedChange}
+              <MarkdownPreview
+                ref={this.previewRef}
+                content={content}
+                navbar={navbar}
+                view={view}
+                onScroll={this.handlePreviewScroll}
+                onContainerRef={this.setPreviewContainer}
+                onRootRef={this.setPreviewRoot}
               />
+              {isStyleEditorOpen && (
+                <div id="nice-style-editor" className={styleEditingClass}>
+                  <StyleEditor />
+                </div>
+              )}
+              <Dialog />
+              <EditorMenu />
             </div>
-          );
-        }}
+            <StatusBar
+              content={content}
+              view={view}
+              isRemoteMode={this.isRemoteMode}
+              currentUser={currentUser}
+              onAuthOpen={this.handleAuthOpen}
+              onNavigatorOpen={this.handleDocumentNavigatorOpen}
+              onCategoryManageOpen={this.handleCategoryManageOpen}
+              onDocumentSettingsOpen={this.handleDocumentSettingsOpen}
+            />
+            <AuthModal
+              visible={this.state.authVisible}
+              onClose={this.handleAuthClose}
+              currentUser={currentUser}
+              onLogin={this.handleLogin}
+              onRegister={this.handleRegister}
+              onUpdatePassword={this.handleUpdatePassword}
+              onLogout={this.handleLogout}
+            />
+            <DocumentNavigator
+              open={documentNavigatorOpen}
+              pinned={documentNavigatorPinned}
+              userId={documentNavigatorUserId}
+              isRemoteMode={this.isRemoteMode}
+              content={content}
+              onClose={this.handleDocumentNavigatorClose}
+              onPinnedChange={this.handleDocumentNavigatorPinnedChange}
+            />
+          </div>
+        )}
       </appContext.Consumer>
     );
   }
