@@ -211,7 +211,7 @@ describe("pasting images copied from a web page", () => {
     fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
     await pasteImages(props.content, pasteEvent(`<img src="${sourceUrl}">`));
     expect(uploadAdaptor).toHaveBeenCalledTimes(1);
-    expect(message.warning).toHaveBeenCalledWith("无法读取网页原图，已使用剪贴板图片，动画可能丢失");
+    expect(message.warning).not.toHaveBeenCalled();
   });
 
   it("reports an unreadable static original when the clipboard contains no image file", async () => {
@@ -222,13 +222,13 @@ describe("pasting images copied from a web page", () => {
   });
 
   it.each(["animation.gif", "animation.webp", "animation"])(
-    "uses the clipboard PNG with a warning when %s is unreadable",
+    "uses the clipboard PNG without a warning when %s is unreadable",
     async (path) => {
       fetchImage.mockRejectedValue(new TypeError("Failed to fetch"));
       await pasteImages(props.content, pasteEvent(`<img src="https://images.example.com/${path}">`));
       expect(fetchImage).toHaveBeenCalledTimes(1);
       expect(uploadAdaptor).toHaveBeenCalledTimes(1);
-      expect(message.warning).toHaveBeenCalledWith("无法读取网页原图，已使用剪贴板图片，动画可能丢失");
+      expect(message.warning).not.toHaveBeenCalled();
     },
   );
 
@@ -240,7 +240,7 @@ describe("pasting images copied from a web page", () => {
     );
     expect(fetchImage).toHaveBeenCalledTimes(2);
     expect(uploadAdaptor).toHaveBeenCalledTimes(1);
-    expect(message.warning).toHaveBeenCalledWith("无法读取网页原图，已使用剪贴板图片，动画可能丢失");
+    expect(message.warning).not.toHaveBeenCalled();
   });
 
   it("handles an image-only HTML fragment without a clipboard file", async () => {
@@ -277,7 +277,7 @@ describe("pasting images copied from a web page", () => {
     const event = pasteEvent(`<img src="${source}">`);
     await pasteImages(props.content, event);
     expect(uploadAdaptor).toHaveBeenCalledWith({file: event.clipboardData.files[0], content: props.content});
-    expect(message.warning).toHaveBeenCalledWith("无法读取网页原图，已使用剪贴板图片，动画可能丢失");
+    expect(message.warning).not.toHaveBeenCalled();
   });
 
   it.each([

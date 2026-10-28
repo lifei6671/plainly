@@ -86,7 +86,6 @@ export const pasteImages = async (content: any, e: ImagePasteEvent) => {
       } catch (error) {
         if (clipboardFile) {
           originalFile = clipboardFile;
-          message.warning("无法读取网页原图，已使用剪贴板图片，动画可能丢失");
         } else {
           message.error("无法读取网页原图，请将图片另存为文件后上传");
           return;

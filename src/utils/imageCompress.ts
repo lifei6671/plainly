@@ -36,15 +36,71 @@ async function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: nu
   });
 }
 
-async function shouldPreserveAnimation(file: Blob) {
-  if (file.type === "image/gif") {
-    return true;
-  }
+function gifColorTableSize(packed: number) {
+  // eslint-disable-next-line no-bitwise
+  return packed & 0x80 ? 3 * 2 ** ((packed & 0x07) + 1) : 0;
+}
 
+function hasMultipleGifFrames(bytes: Uint8Array) {
+  if (bytes.length < 13) return false;
+  let offset = 13 + gifColorTableSize(bytes[10]);
+  let frames = 0;
+  while (offset < bytes.length) {
+    const block = bytes[offset++];
+    if (block === 0x3b) return false;
+    if (block === 0x21) {
+      // 扩展标签之后也是长度前缀的子块，不把注释内容当作图像帧。
+      if (offset >= bytes.length) return false;
+      offset += 1;
+    } else if (block === 0x2c) {
+      if (offset + 9 > bytes.length) return false;
+      offset += 9 + gifColorTableSize(bytes[offset + 8]);
+      if (offset >= bytes.length) return false;
+      offset += 1; // LZW 最小码长。
+      frames += 1;
+    } else {
+      return false;
+    }
+    // 跳过完整的压缩数据或扩展子块，直到零长度终止块。
+    while (offset < bytes.length && bytes[offset] !== 0) {
+      offset += bytes[offset] + 1;
+    }
+    if (offset >= bytes.length) return false;
+    offset += 1;
+    if (frames > 1) return true;
+  }
+  return false;
+}
+
+async function hasMultiplePngFrames(file: Blob) {
+  let offset = 8;
+  while (offset + 12 <= file.size) {
+    // 分块位置依赖上一个头部，顺序读取元数据，避免载入整张 PNG。
+    // eslint-disable-next-line no-await-in-loop
+    const header = new Uint8Array(await file.slice(offset, offset + 8).arrayBuffer());
+    const length = new DataView(header.buffer).getUint32(0);
+    if (offset + length + 12 > file.size) return false;
+    const type = String.fromCharCode(...header.subarray(4, 8));
+    if (type === "IDAT" || type === "IEND") return false;
+    if (type === "acTL") {
+      if (length !== 8) return false;
+      // eslint-disable-next-line no-await-in-loop
+      const data = await file.slice(offset + 8, offset + 12).arrayBuffer();
+      return new DataView(data).getUint32(0) > 1;
+    }
+    offset += length + 12;
+  }
+  return false;
+}
+
+async function shouldPreserveAnimation(file: Blob) {
   const header = new Uint8Array(await file.slice(0, 21).arrayBuffer());
   const signature = String.fromCharCode(...header);
   if (signature.startsWith("GIF87a") || signature.startsWith("GIF89a")) {
-    return true;
+    return hasMultipleGifFrames(new Uint8Array(await file.arrayBuffer()));
+  }
+  if (signature.startsWith("\x89PNG\r\n\x1a\n")) {
+    return hasMultiplePngFrames(file);
   }
 
   // WebP VP8X 的 Animation 标志位；仅检查文件头，避免解码丢失动画帧。
@@ -58,7 +114,7 @@ async function shouldPreserveAnimation(file: Blob) {
 }
 
 /**
- * GIF 和动画 WebP 原样返回，其余图片压缩（缩放）+ 转 WebP，浏览器优先，WASM 兜底
+ * 多帧 GIF/APNG 和动画 WebP 原样返回，静态图片压缩（缩放）+ 转 WebP，浏览器优先，WASM 兜底
  * @param {File|Blob} file
  * @param {Object} opts
  * @param {number} opts.quality 0~1，建议 0.75~0.88
